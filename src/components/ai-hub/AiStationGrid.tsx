@@ -11,8 +11,19 @@ import {
   loadManagedStations,
   mergePublicStations,
 } from '../../utils/api-station-sync';
+import {
+  AdminSession,
+  clearAdminSession,
+  isSessionActive,
+  loadAdminSession,
+  logoutAdmin,
+  normalizeAdminBase,
+  saveAdminSession,
+  verifyAdminSession,
+} from '../../utils/admin-auth';
 import { AiStationItem } from './AiStationItem';
 import { AiStationModal } from './AiStationModal';
+import { AdminLoginModal } from './AdminLoginModal';
 import { ApiSyncPanel } from './ApiSyncPanel';
 import { BestConfigModal } from './BestConfigModal';
 import { StationImportModal } from './StationImportModal';
@@ -64,6 +75,69 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
   const [error, setError] = useState<string | null>(null);
   const [statusData, setStatusData] = useState<ApiStationStatus | null>(null);
   const [models, setModels] = useState<string[]>([]);
+
+  // Admin mode: a real login against the API station unlocks management
+  // controls. Visitors only see the display surface. Session lives in
+  // sessionStorage and expires with the backend access token (15 min TTL);
+  // restored sessions are re-validated against /api/user/self once.
+  const [adminSession, setAdminSession] = useState<AdminSession | null>(null);
+  const [isAdminVerified, setIsAdminVerified] = useState(false);
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+  // Ticks every 30s so an expired token flips the UI back to visitor mode
+  // without waiting for the next state change.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+
+  const isAdmin =
+    !!adminSession &&
+    isAdminVerified &&
+    normalizeAdminBase(adminSession.baseUrl) === normalizeAdminBase(endpoint) &&
+    isSessionActive(adminSession) &&
+    nowTick > 0;
+
+  useEffect(() => {
+    const session = loadAdminSession(endpoint);
+    if (!session || !isSessionActive(session)) {
+      if (session) clearAdminSession();
+      setAdminSession(null);
+      setIsAdminVerified(false);
+      return;
+    }
+    setAdminSession(session);
+    let cancelled = false;
+    verifyAdminSession(session).then((ok) => {
+      if (cancelled) return;
+      if (!ok) {
+        clearAdminSession();
+        setAdminSession(null);
+      }
+      setIsAdminVerified(ok);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [endpoint]);
+
+  useEffect(() => {
+    if (!adminSession) return;
+    const timer = setInterval(() => setNowTick(Date.now()), 30_000);
+    return () => clearInterval(timer);
+  }, [adminSession]);
+
+  const handleAdminLogin = useCallback((session: AdminSession) => {
+    saveAdminSession(session);
+    setAdminSession(session);
+    setIsAdminVerified(true);
+    setNowTick(Date.now());
+  }, []);
+
+  const handleAdminLogout = useCallback(() => {
+    if (adminSession) logoutAdmin(adminSession);
+    clearAdminSession();
+    setAdminSession(null);
+    setIsAdminVerified(false);
+    setIsImportModalOpen(false);
+    setIsBestConfigOpen(false);
+  }, [adminSession]);
 
   // Sync with API station (guarded against races: only the latest request may
   // setState or persist the endpoint, otherwise a slow stale response from a
@@ -188,6 +262,10 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
         onRefresh={() => syncWithApi(endpoint)}
         onOpenBestConfig={() => setIsBestConfigOpen(true)}
         onOpenImport={() => setIsImportModalOpen(true)}
+        isAdmin={isAdmin}
+        adminDisplayName={isAdmin ? adminSession?.displayName : undefined}
+        onRequestLogin={() => setIsLoginModalOpen(true)}
+        onAdminLogout={handleAdminLogout}
       />
 
       {/* Controls Bar */}
@@ -215,27 +293,40 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
           </button>
         ))}
 
-        {/* Import & Update Quick Button */}
-        <button
-          type="button"
-          onClick={() => setIsImportModalOpen(true)}
-          className="pill ml-auto inline-flex items-center gap-1.5 text-xs text-[var(--ink)] hover:bg-[var(--paper-soft)]"
-          title="导入 New API 渠道或同步更新最新模型"
-        >
-          <UiIcon name="download" size={12} />
-          <span>导入/更新</span>
-        </button>
+        {/* Admin-only quick actions; visitors get the login entry instead */}
+        {isAdmin ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setIsImportModalOpen(true)}
+              className="pill ml-auto inline-flex items-center gap-1.5 text-xs text-[var(--ink)] hover:bg-[var(--paper-soft)]"
+              title="导入 New API 渠道或同步更新最新模型"
+            >
+              <UiIcon name="download" size={12} />
+              <span>导入/更新</span>
+            </button>
 
-        {/* Best Config Master Button */}
-        <button
-          type="button"
-          onClick={() => setIsBestConfigOpen(true)}
-          className="pill active !bg-[var(--ink)] !border-[var(--ink)] text-[var(--paper)] hover:opacity-90 inline-flex items-center gap-1.5 text-xs"
-          title="根据当前 API 站点配置生成最佳公益站拓扑方案"
-        >
-          <UiIcon name="sparkles" size={12} className="text-amber-300" />
-          <span>最佳拓扑方案</span>
-        </button>
+            <button
+              type="button"
+              onClick={() => setIsBestConfigOpen(true)}
+              className="pill active !bg-[var(--ink)] !border-[var(--ink)] text-[var(--paper)] hover:opacity-90 inline-flex items-center gap-1.5 text-xs"
+              title="根据当前 API 站点配置生成最佳公益站拓扑方案"
+            >
+              <UiIcon name="sparkles" size={12} className="text-amber-300" />
+              <span>最佳拓扑方案</span>
+            </button>
+          </>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setIsLoginModalOpen(true)}
+            className="pill ml-auto inline-flex items-center gap-1.5 text-xs text-[var(--ink-soft)] hover:bg-[var(--paper-soft)]"
+            title="管理员登录后可进行站点管理与配置更新"
+          >
+            <UiIcon name="shield" size={12} />
+            <span>管理员登录</span>
+          </button>
+        )}
       </div>
 
       {/* Card Count & Match Info */}
@@ -297,6 +388,14 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
         apiEndpoint={endpoint}
         onUpdateStations={handleUpdateStations}
         onResetDefaults={handleResetDefaults}
+      />
+
+      {/* Admin Login Modal (management operations require a verified admin) */}
+      <AdminLoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+        endpoint={endpoint}
+        onLogin={handleAdminLogin}
       />
     </div>
   );
