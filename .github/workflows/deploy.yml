@@ -7,12 +7,17 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# workflow_dispatch can target any branch; only main may ever reach production.
+permissions:
+  contents: read
+
 concurrency:
   group: deploy-production
   cancel-in-progress: false
 
 jobs:
   deploy:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -35,14 +40,19 @@ jobs:
           chmod 700 ~/.ssh
           printf '%s\n' "$RELAY_KEY" > ~/.ssh/relay_key
           printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
-          chmod 600 ~/.ssh/relay_key ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/relay_key ~/.ssh/deploy_key ~/.ssh/known_hosts
+          # Host keys are pinned (StrictHostKeyChecking yes), not TOFU: every
+          # runner is ephemeral, so accept-new would re-trust whatever endpoint
+          # answers on each run. The pinned keys were verified against the
+          # hosts' own sshd public keys (fingerprint kLmFsR/... for nl-vps).
           cat >> ~/.ssh/config << 'CFG'
           Host relay
             HostName 35.212.179.13
             User ci-relay
             IdentityFile ~/.ssh/relay_key
             IdentitiesOnly yes
-            StrictHostKeyChecking accept-new
+            StrictHostKeyChecking yes
 
           Host nl-target
             HostName 10.144.144.12
@@ -50,12 +60,13 @@ jobs:
             IdentityFile ~/.ssh/deploy_key
             IdentitiesOnly yes
             ProxyJump relay
-            StrictHostKeyChecking accept-new
+            StrictHostKeyChecking yes
           CFG
           chmod 600 ~/.ssh/config
         env:
           RELAY_KEY: ${{ secrets.CI_RELAY_SSH_KEY }}
           DEPLOY_KEY: ${{ secrets.NL_VPS_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.CI_SSH_KNOWN_HOSTS }}
 
       - name: Deploy (rsync over relay + nginx reload)
         run: |

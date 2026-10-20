@@ -12,13 +12,11 @@ const lockStack: symbol[] = [];
 export function useModalLock(isOpen: boolean, onClose: () => void) {
   const onCloseRef = useRef(onClose);
   onCloseRef.current = onClose;
-  const lockIdRef = useRef<Symbol | null>(null);
 
   useEffect(() => {
     if (!isOpen) return;
 
     const lockId = Symbol('modal-lock');
-    lockIdRef.current = lockId;
     lockStack.push(lockId);
 
     const originalOverflow = document.body.style.overflow;
@@ -44,7 +42,6 @@ export function useModalLock(isOpen: boolean, onClose: () => void) {
       window.removeEventListener('keydown', handleKeyDown);
       const idx = lockStack.indexOf(lockId);
       if (idx >= 0) lockStack.splice(idx, 1);
-      lockIdRef.current = null;
       previouslyFocused?.focus?.();
     };
   }, [isOpen]);

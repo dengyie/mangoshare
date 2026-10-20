@@ -12,6 +12,12 @@ export const DEFAULT_API_STATION_URL = 'https://api.mangoqwq.com';
 export const STORAGE_KEY_API_URL = 'mangoshare_api_hub_linked_url';
 export const STORAGE_KEY_CUSTOM_STATIONS = 'mangoshare_custom_ai_stations_v2';
 
+// AiStationItem 联合类型字段的白名单，localStorage 缓存与备份还原共用：
+// 缺失或非法值一律回退到括号里的默认分支。
+export const VALID_CATEGORIES = ['NewAPI', 'Gateway', 'ImageGen', 'DirectKey'] as const;
+export const VALID_AUTH_TYPES = ['LinuxDO', 'GitHub', 'Password', 'DirectKey', 'Session'] as const;
+export const VALID_HEALTH_STATES = ['online', 'degraded', 'offline'] as const;
+
 /**
  * Loads the user-managed station list from localStorage (v2 schema), falling
  * back to the bundled defaults. Used both by the ai-hub grid and by App-level
@@ -30,7 +36,16 @@ export function loadManagedStations(defaults: AiStationItem[]): AiStationItem[] 
         const sanitized = parsed
           .filter((s) => s && typeof s === 'object' && s.name)
           .map((s) => ({
+            // 必填展示字段兜底：v2 缓存只由本应用写入（导入/备份还原都会带上
+            // 这些字段），但手改 localStorage 或未来 schema 演进可能留下缺字段
+            // 的条目 —— 缺 quotaDesc/apiBaseUrl 会让卡片或弹窗渲染直接崩溃。
             ...s,
+            category: VALID_CATEGORIES.includes(s.category) ? s.category : 'Gateway',
+            authType: VALID_AUTH_TYPES.includes(s.authType) ? s.authType : 'LinuxDO',
+            healthState: VALID_HEALTH_STATES.includes(s.healthState) ? s.healthState : 'online',
+            portalUrl: typeof s.portalUrl === 'string' && s.portalUrl ? s.portalUrl : 'https://api.example.com',
+            apiBaseUrl: typeof s.apiBaseUrl === 'string' && s.apiBaseUrl ? s.apiBaseUrl : 'https://api.example.com/v1',
+            quotaDesc: typeof s.quotaDesc === 'string' && s.quotaDesc ? s.quotaDesc : '本地缓存条目',
             models: Array.isArray(s.models) ? s.models : [],
             tags: Array.isArray(s.tags) ? s.tags : [],
           }));
@@ -186,8 +201,7 @@ export async function fetchApiStationConfig(
     // Both channels failed (or the whole URL is unreachable): surface the failure
     // instead of silently reporting "success with 0 models".
     if (models.length === 0 && statusResult.status === 'rejected') {
-      const reason =
-        statusResult.status === 'rejected' ? (statusResult as PromiseRejectedResult).reason : null;
+      const reason = (statusResult as PromiseRejectedResult).reason;
       throw reason instanceof Error ? reason : new Error('无法连接目标 API 站点，请检查地址是否有效');
     }
 
@@ -600,6 +614,9 @@ export function parseNewApiChannelsJson(rawJson: string): AiStationItem[] {
     let category: AiStationItem['category'] = 'Gateway';
     if (typeNum === 60) category = 'NewAPI';
     else if (typeNum === 20) category = 'DirectKey';
+    // DirectKey 类渠道（如 OpenRouter）不走 Linux.do 授权，否则「Linux.do」
+    // 筛选标签会把它们错误地收进来。
+    const authType: AiStationItem['authType'] = category === 'DirectKey' ? 'DirectKey' : 'LinuxDO';
 
     return {
       id,
@@ -608,7 +625,7 @@ export function parseNewApiChannelsJson(rawJson: string): AiStationItem[] {
       portalUrl: cleanBaseUrl,
       apiBaseUrl,
       models: models.length > 0 ? models : ['gpt-5.5'],
-      authType: 'LinuxDO',
+      authType,
       quotaDesc: item.remark || '从 New API 渠道配置系统性导入',
       healthState: Number(item.status) === 1 ? 'online' : Number(item.status) === 2 ? 'degraded' : 'offline',
       turnstile: false,

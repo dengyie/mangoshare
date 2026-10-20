@@ -3,14 +3,13 @@ import { AiStationItem } from '../../types/ai-station';
 import {
   applyApiModelsToStations,
   parseNewApiChannelsJson,
+  VALID_AUTH_TYPES,
+  VALID_CATEGORIES,
+  VALID_HEALTH_STATES,
 } from '../../utils/api-station-sync';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useModalLock } from '../../utils/use-modal-lock';
 import { UiIcon } from '../awesome-ui/UiIcon';
-
-const VALID_CATEGORIES = ['NewAPI', 'Gateway', 'ImageGen', 'DirectKey'] as const;
-const VALID_AUTH_TYPES = ['LinuxDO', 'GitHub', 'Password', 'DirectKey', 'Session'] as const;
-const VALID_HEALTH_STATES = ['online', 'degraded', 'offline'] as const;
 
 interface StationImportModalProps {
   isOpen: boolean;
@@ -51,6 +50,10 @@ export const StationImportModal: React.FC<StationImportModalProps> = ({
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
     };
   }, []);
+
+  // ESC 关闭 + 背景滚动锁定。经 ref 中转，让守卫逻辑（未提交内容先 confirm）
+  // 定义在早退之后也能被 ESC 路径复用。
+  useModalLock(isOpen, () => closeGuardRef.current());
 
   if (!isOpen) return null;
 
