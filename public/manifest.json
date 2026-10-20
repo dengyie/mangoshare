@@ -1,0 +1,32 @@
+{
+  "name": "MangoShare 出海资源枢纽",
+  "short_name": "MangoShare",
+  "description": "聚合全球加密货币卡 (U卡)、海外保号电话卡/eSIM、活跃 AI 公益站、主流信用卡与开发者羊毛福利",
+  "start_url": "/#/",
+  "display": "standalone",
+  "background_color": "#f6f5f0",
+  "theme_color": "#1a1918",
+  "icons": [
+    {
+      "src": "/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png"
+    },
+    {
+      "src": "/logo-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/logo.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

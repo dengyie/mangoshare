@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.zcode/
+*.log
+.DS_Store
