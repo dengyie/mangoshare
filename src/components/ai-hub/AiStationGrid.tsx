@@ -1,13 +1,15 @@
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { AiStationItem as AiStationItemType } from '../../types/ai-station';
-import { ApiStationStatus } from '../../types/api-sync';
+import { ApiStationStatus, PublicStationChannel } from '../../types/api-sync';
 import {
   DEFAULT_API_STATION_URL,
   STORAGE_KEY_API_URL,
   STORAGE_KEY_CUSTOM_STATIONS,
   fetchApiStationConfig,
+  fetchPublicStationChannels,
   analyzeTopology,
   loadManagedStations,
+  mergePublicStations,
 } from '../../utils/api-station-sync';
 import { AiStationItem } from './AiStationItem';
 import { AiStationModal } from './AiStationModal';
@@ -35,9 +37,21 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
 
   // Managed Station List (supporting local modifications & imports)
-  const [activeStations, setActiveStations] = useState<AiStationItemType[]>(() =>
+  const [managedStations, setManagedStations] = useState<AiStationItemType[]>(() =>
     loadManagedStations(initialStations)
   );
+
+  // Live channel topology published by the API station (GET /api/public_stations).
+  // null = backend predates the endpoint → preset/local-only rendering.
+  const [liveChannels, setLiveChannels] = useState<PublicStationChannel[] | null>(null);
+
+  // Merged grid data: presets upgraded with real backend state + dynamic
+  // upstream cards appended. Recomputed only when either side changes.
+  const merged = useMemo(
+    () => mergePublicStations(managedStations, liveChannels),
+    [managedStations, liveChannels]
+  );
+  const activeStations = merged.stations;
 
   // Linkage state with our API station
   const [endpoint, setEndpoint] = useState<string>(() => {
@@ -60,10 +74,14 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
     setIsLoading(true);
     setError(null);
     try {
-      const data = await fetchApiStationConfig(targetUrl);
+      const [data, channels] = await Promise.all([
+        fetchApiStationConfig(targetUrl),
+        fetchPublicStationChannels(targetUrl).catch(() => null),
+      ]);
       if (seq !== syncSeqRef.current) return; // superseded by a newer request
       setStatusData(data.status);
       setModels(data.models);
+      setLiveChannels(channels);
       if (data.models.length === 0) {
         setError('已连接但未拉取到任何模型，请确认站点地址与接口可用性');
       }
@@ -80,6 +98,7 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
       setError(err instanceof Error ? err.message : '同步连接失败');
       setStatusData(null);
       setModels([]);
+      setLiveChannels(null);
     } finally {
       if (seq === syncSeqRef.current) {
         setIsLoading(false);
@@ -95,9 +114,10 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
     setEndpoint(newUrl);
   };
 
-  // Station update & reset handlers
+  // Station update & reset handlers (localStorage stores the managed list;
+  // live backend channels are merged on top at render time)
   const handleUpdateStations = (newStations: AiStationItemType[]) => {
-    setActiveStations(newStations);
+    setManagedStations(newStations);
     if (typeof window !== 'undefined') {
       try {
         localStorage.setItem(STORAGE_KEY_CUSTOM_STATIONS, JSON.stringify(newStations));
@@ -108,7 +128,7 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
   };
 
   const handleResetDefaults = () => {
-    setActiveStations(initialStations);
+    setManagedStations(initialStations);
     if (typeof window !== 'undefined') {
       localStorage.removeItem(STORAGE_KEY_CUSTOM_STATIONS);
     }
@@ -220,7 +240,14 @@ export const AiStationGrid: React.FC<AiStationGridProps> = ({
 
       {/* Card Count & Match Info */}
       <div className="count flex flex-wrap items-center justify-between gap-2">
-        <span>共 {filteredStations.length} 个活跃公益站 / 自建中转节点</span>
+        <span>
+          共 {filteredStations.length} 个活跃公益站 / 自建中转节点
+          {merged.channelCount > 0 && (
+            <span className="ml-2 inline-flex items-center gap-1 rounded border border-[var(--line)] bg-[var(--paper-soft)] px-1.5 py-0.5 text-[10px] font-mono text-[var(--ink-soft)]">
+              实时下发 {merged.channelCount} 渠道 · {merged.upstreamCount} 上游
+            </span>
+          )}
+        </span>
         {models.length > 0 && (
           <span className="text-xs text-[var(--ink-soft)]">
             已与 <strong className="text-[var(--ink)]">{endpoint}</strong> ({models.length} 款模型) 形成拓扑匹配

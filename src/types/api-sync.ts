@@ -22,6 +22,22 @@ export interface PricingModelItem {
   supported_endpoint_types?: string[];
 }
 
+/** GET /api/public_stations 的单条渠道投影（后端白名单 DTO）。 */
+export interface PublicStationChannel {
+  id: number;
+  name: string;
+  type: number;
+  status: number;
+  base_url: string;
+  models: string[];
+  group: string;
+  priority: number;
+  weight: number;
+  tag: string;
+  response_time: number;
+  test_time: number;
+}
+
 export interface ApiSyncState {
   endpoint: string;
   isLoading: boolean;

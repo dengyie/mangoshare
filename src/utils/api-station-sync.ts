@@ -6,6 +6,7 @@ import {
   TopologyAnalysisResult,
   NewApiChannelPayload,
   RecommendedTier,
+  PublicStationChannel,
 } from '../types/api-sync';
 
 export const DEFAULT_API_STATION_URL = 'https://api.mangoqwq.com';
@@ -634,4 +635,170 @@ export function parseNewApiChannelsJson(rawJson: string): AiStationItem[] {
       rpmLimit: item.setting ? '已配置流控' : '30 RPM',
     };
   });
+}
+
+/**
+ * Fetches the deployment's published station topology (channels tagged or
+ * allowed for public display by PUBLIC_STATIONS_MODE on the API station).
+ * Returns null when the backend predates the endpoint (404) so callers can
+ * fall back to preset-only rendering.
+ */
+export async function fetchPublicStationChannels(
+  rawUrl: string,
+  timeoutMs = 6000
+): Promise<PublicStationChannel[] | null> {
+  const baseUrl = normalizeApiUrl(rawUrl);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${baseUrl}/api/public_stations`, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (!json || !Array.isArray(json.data)) return null;
+    return (json.data as PublicStationChannel[]).filter(
+      (ch) =>
+        ch &&
+        typeof ch === 'object' &&
+        typeof ch.name === 'string' &&
+        typeof ch.base_url === 'string'
+    );
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Normalizes a channel base_url to its bare origin for card matching:
+ * trims whitespace/trailing slashes, drops a trailing /v1, keeps the rest.
+ */
+function canonicalUpstreamOrigin(raw: string): string {
+  let cleaned = (raw || '').trim().replace(/\/+$/, '');
+  if (!cleaned) return '';
+  cleaned = cleaned.replace(/\/v1$/, '');
+  return cleaned;
+}
+
+function channelCategory(type: number): AiStationItem['category'] {
+  if (type === 60) return 'NewAPI';
+  if (type === 20) return 'DirectKey';
+  return 'Gateway';
+}
+
+function healthFromStatus(status: number): AiStationItem['healthState'] {
+  return status === 1 ? 'online' : status === 2 ? 'degraded' : 'offline';
+}
+
+export interface MergedStationResult {
+  stations: AiStationItem[];
+  /** Unique upstream origins represented in the merged grid. */
+  upstreamCount: number;
+  /** Channels that arrived from the API station backend. */
+  channelCount: number;
+}
+
+/**
+ * Merges the API station's live channel topology into the station list:
+ * - presets whose portal/api origin matches a channel are upgraded with the
+ *   backend's real model list, latency and health;
+ * - origins with no preset become additional cards (deterministic id
+ *   `upstream-<hostslug>` so deep links survive reloads while the fetch is
+ *   fresh);
+ * - multiple channels on one origin collapse into a single card whose models
+ *   are the union and whose tags carry the channel count.
+ */
+export function mergePublicStations(
+  presets: AiStationItem[],
+  channels: PublicStationChannel[] | null
+): MergedStationResult {
+  if (!channels || channels.length === 0) {
+    return { stations: presets, upstreamCount: presets.length, channelCount: 0 };
+  }
+
+  // Aggregate channels by canonical origin.
+  const byOrigin = new Map<
+    string,
+    { name: string; models: Set<string>; channelCount: number; type: number; latency: number }
+  >();
+  for (const ch of channels) {
+    const origin = canonicalUpstreamOrigin(ch.base_url);
+    if (!origin) continue;
+    const existing = byOrigin.get(origin);
+    const models = new Set(ch.models || []);
+    if (existing) {
+      models.forEach((m) => existing.models.add(m));
+      existing.channelCount += 1;
+      existing.latency =
+        existing.latency > 0 && ch.response_time > 0
+          ? Math.min(existing.latency, ch.response_time)
+          : Math.max(existing.latency, ch.response_time);
+    } else {
+      byOrigin.set(origin, {
+        name: ch.name,
+        models,
+        channelCount: 1,
+        type: ch.type,
+        latency: ch.response_time,
+      });
+    }
+  }
+
+  const presetOriginOf = (s: AiStationItem) =>
+    canonicalUpstreamOrigin(s.apiBaseUrl) ||
+    canonicalUpstreamOrigin(s.portalUrl);
+
+  const merged = presets.map((preset) => {
+    const origin = presetOriginOf(preset);
+    const entry = origin ? byOrigin.get(origin) : undefined;
+    if (!entry) return preset;
+    return {
+      ...preset,
+      models: entry.models.size > 0 ? Array.from(entry.models) : preset.models,
+      healthState: 'online' as AiStationItem['healthState'],
+      tags: Array.from(new Set([...preset.tags, `API站已接入`, `${entry.channelCount} 渠道`])),
+      rpmLimit: entry.latency > 0 ? `~${entry.latency}ms` : preset.rpmLimit,
+    };
+  });
+
+  const presetOrigins = new Set(merged.map(presetOriginOf));
+  const extras: AiStationItem[] = [];
+  for (const [origin, entry] of byOrigin) {
+    if (presetOrigins.has(origin)) continue;
+    // Slug from the full origin (not just hostname): distinct origins that
+    // share a host (e.g. https://a.b and https://a.b/claude) must not collide.
+    const hostSlug = origin
+      .replace(/^https?:\/\//, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/-+/g, '-')
+      .replace(/^-|-$/g, '')
+      .slice(0, 60) || 'station';
+    const category = channelCategory(entry.type);
+    extras.push({
+      id: `upstream-${hostSlug}`,
+      name: entry.name,
+      category,
+      portalUrl: origin,
+      apiBaseUrl: `${origin}/v1`,
+      models: Array.from(entry.models),
+      authType: category === 'DirectKey' ? 'DirectKey' : 'Session',
+      quotaDesc: `API 站已接入 · ${entry.channelCount} 渠道 · 优先级 1-10`,
+      healthState: 'online',
+      turnstile: false,
+      tags: ['动态下发', category, entry.channelCount > 1 ? `${entry.channelCount} 渠道` : '单渠道'],
+      tutorial: '该站点通过 API 站渠道动态接入，模型清单实时来自后台配置。',
+      rpmLimit: entry.latency > 0 ? `~${entry.latency}ms` : undefined,
+    });
+  }
+
+  return {
+    stations: [...merged, ...extras],
+    upstreamCount: byOrigin.size,
+    channelCount: channels.length,
+  };
 }
