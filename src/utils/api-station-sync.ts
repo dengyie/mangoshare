@@ -759,9 +759,11 @@ export function mergePublicStations(
     return {
       ...preset,
       models: entry.models.size > 0 ? Array.from(entry.models) : preset.models,
-      healthState: 'online' as AiStationItem['healthState'],
+      // Backend channel status only says "enabled"; the real liveness signal
+      // is a measured response_time from the last channel test.
+      healthState: entry.latency > 0 ? ('online' as AiStationItem['healthState']) : preset.healthState,
+      responseTime: entry.latency > 0 ? entry.latency : undefined,
       tags: Array.from(new Set([...preset.tags, `API站已接入`, `${entry.channelCount} 渠道`])),
-      rpmLimit: entry.latency > 0 ? `~${entry.latency}ms` : preset.rpmLimit,
     };
   });
 
@@ -788,11 +790,11 @@ export function mergePublicStations(
       models: Array.from(entry.models),
       authType: category === 'DirectKey' ? 'DirectKey' : 'Session',
       quotaDesc: `API 站已接入 · ${entry.channelCount} 渠道 · 优先级 1-10`,
-      healthState: 'online',
+      healthState: entry.latency > 0 ? 'online' : 'degraded',
+      responseTime: entry.latency > 0 ? entry.latency : undefined,
       turnstile: false,
       tags: ['动态下发', category, entry.channelCount > 1 ? `${entry.channelCount} 渠道` : '单渠道'],
       tutorial: '该站点通过 API 站渠道动态接入，模型清单实时来自后台配置。',
-      rpmLimit: entry.latency > 0 ? `~${entry.latency}ms` : undefined,
     });
   }
 

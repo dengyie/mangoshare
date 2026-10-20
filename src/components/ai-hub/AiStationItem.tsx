@@ -8,10 +8,18 @@ interface AiStationItemProps {
 }
 
 export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect }) => {
+  // Cards carrying a backend-measured latency (fed by GET /api/public_stations)
+  // skip the client probe entirely: the backend already tests the upstream, and
+  // fanning out a no-cors fetch per card on every page load is wasted traffic.
+  const backendLatency =
+    typeof station.responseTime === 'number' && station.responseTime > 0
+      ? station.responseTime
+      : null;
   const [latency, setLatency] = useState<number | null>(null);
   const [probeStatus, setProbeStatus] = useState<'probing' | 'online' | 'degraded'>('probing');
 
   useEffect(() => {
+    if (backendLatency !== null) return;
     let active = true;
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 3500);
@@ -45,7 +53,7 @@ export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect 
       controller.abort();
       clearTimeout(timeoutId);
     };
-  }, [station.portalUrl, station.name]);
+  }, [station.portalUrl, station.name, backendLatency]);
 
   const handlePointerMove = (e: React.PointerEvent<HTMLSpanElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -56,20 +64,27 @@ export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect 
   const cardArt = getAiStationArt(station.id, station.name, station.category, station.models);
 
   const statusText = (() => {
+    if (backendLatency !== null) {
+      return `${backendLatency}ms`;
+    }
     if (probeStatus === 'probing' && latency === null) {
       return '测速中…';
     }
     if (probeStatus === 'degraded') {
       return '测速超时';
     }
-    const val = latency ?? 42;
-    return `${val}ms`;
+    return `${latency}ms`;
   })();
 
   const statusColor = (() => {
+    if (backendLatency !== null) {
+      if (backendLatency < 200) return '#10b981';
+      if (backendLatency < 500) return '#f59e0b';
+      return '#f97316';
+    }
     if (probeStatus === 'probing' && latency === null) return '#10b981';
     if (probeStatus === 'degraded') return '#f97316';
-    const val = latency ?? 42;
+    const val = latency ?? 9999;
     if (val < 200) return '#10b981';
     if (val < 500) return '#f59e0b';
     return '#f97316';

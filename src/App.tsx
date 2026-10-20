@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TabType } from './types/common';
 import { UCardItem as UCardItemType } from './types/u-card';
 import { SimCardItem as SimCardItemType } from './types/sim-card';
@@ -9,7 +9,6 @@ import { PerkItem as PerkItemType } from './types/perk';
 import { U_CARDS } from './data/u-cards';
 import { SIM_CARDS } from './data/sim-cards';
 import { AI_STATIONS } from './data/ai-stations';
-import { loadManagedStations } from './utils/api-station-sync';
 import { CREDIT_CARDS } from './data/credit-cards';
 import { PERKS } from './data/perks';
 
@@ -19,10 +18,12 @@ import { SimCardGrid } from './components/sim-card/SimCardGrid';
 import { SimCardModal } from './components/sim-card/SimCardModal';
 import { AiStationGrid } from './components/ai-hub/AiStationGrid';
 import { AiStationModal } from './components/ai-hub/AiStationModal';
+import { AccountPanel } from './components/account/AccountPanel';
 import { CreditCardGrid } from './components/credit-card/CreditCardGrid';
 import { CreditCardModal } from './components/credit-card/CreditCardModal';
 import { PerkGrid } from './components/perk/PerkGrid';
 import { PerkModal } from './components/perk/PerkModal';
+import { useAiHubData } from './hooks/useAiHubData';
 
 import { FluidContourBackdrop } from './components/awesome-ui/FluidContourBackdrop';
 import { AnimatedCounter } from './components/awesome-ui/AnimatedCounter';
@@ -34,7 +35,7 @@ function parseHashLocation() {
   }
   const raw = window.location.hash.replace('#/', '').replace('#', '');
   const [tabPart, queryPart] = raw.split('?');
-  const validTabs: TabType[] = ['u-cards', 'sim-cards', 'ai-hub', 'credit-cards', 'perks'];
+  const validTabs: TabType[] = ['u-cards', 'sim-cards', 'ai-hub', 'credit-cards', 'perks', 'account'];
   const tab: TabType = validTabs.includes(tabPart as TabType) ? (tabPart as TabType) : 'u-cards';
   let cardId: string | null = null;
   if (queryPart) {
@@ -49,6 +50,21 @@ export const App: React.FC = () => {
   const [currentTab, setCurrentTab] = useState<TabType>(() => parseHashLocation().tab);
   const [searchQuery, setSearchQuery] = useState('');
   const [showScrollTop, setShowScrollTop] = useState(false);
+
+  // AI Hub data (endpoint sync, live topology merge, admin session) lives at
+  // App level: the merged station count feeds the nav badge, hero banner and
+  // stat button, and deep links must resolve against the merged list.
+  const hub = useAiHubData(AI_STATIONS);
+  const stationsRef = useRef(hub.stations);
+  stationsRef.current = hub.stations;
+
+  const findAiStation = useCallback(
+    (cardId: string): AiStationItemType | null =>
+      stationsRef.current.find(
+        (s) => s.id === cardId || s.name.toLowerCase().includes(cardId.toLowerCase())
+      ) || null,
+    []
+  );
 
   const [selectedUCard, setSelectedUCard] = useState<UCardItemType | null>(() => {
     const { tab, cardId } = parseHashLocation();
@@ -66,17 +82,15 @@ export const App: React.FC = () => {
     return null;
   });
 
-  // Deep-link resolution includes locally imported stations so shared links to
-  // custom nodes (id `custom-...`) survive a fresh page load.
-  const findAiStation = (cardId: string): AiStationItemType | null =>
-    loadManagedStations(AI_STATIONS).find(
-      (s) => s.id === cardId || s.name.toLowerCase().includes(cardId.toLowerCase())
-    ) || null;
-
+  // Deep-link resolution includes live upstream stations so shared links to
+  // dynamic nodes (id `upstream-...`) resolve once the topology fetch lands
+  // (late-resolution effect below).
   const [selectedAiStation, setSelectedAiStation] = useState<AiStationItemType | null>(() => {
     const { tab, cardId } = parseHashLocation();
     if (tab === 'ai-hub' && cardId) {
-      return findAiStation(cardId);
+      return stationsRef.current.find(
+        (s) => s.id === cardId || s.name.toLowerCase().includes(cardId.toLowerCase())
+      ) || null;
     }
     return null;
   });
@@ -179,18 +193,32 @@ export const App: React.FC = () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('scroll', handleScroll);
     };
-  }, []);
+  }, [findAiStation]);
+
+  // A deep link to a dynamic upstream station arrives before the topology
+  // fetch resolves; re-resolve once the merged list appears.
+  useEffect(() => {
+    if (currentTab !== 'ai-hub' || selectedAiStation) return;
+    const { tab, cardId } = parseHashLocation();
+    if (tab !== 'ai-hub' || !cardId) return;
+    const match = findAiStation(cardId);
+    if (match) setSelectedAiStation(match);
+  }, [hub.stations, currentTab, selectedAiStation, findAiStation]);
+
+  const aiStationCount = hub.stations.length;
 
   const trustPillText = (() => {
     switch (currentTab) {
       case 'sim-cards':
         return `收录 ${SIM_CARDS.length} 款海外电话卡 / eSIM`;
       case 'ai-hub':
-        return `收录 ${AI_STATIONS.length} 个活跃 AI 公益站节点`;
+        return `收录 ${aiStationCount} 个活跃 AI 公益站节点`;
       case 'credit-cards':
         return `收录 ${CREDIT_CARDS.length} 张全球主流信用卡 / 账户`;
       case 'perks':
         return `精选 ${PERKS.length} 项出海与开发者高价值福利`;
+      case 'account':
+        return `管理员登录与站点管理控制台`;
       default:
         return `收录 ${U_CARDS.length} 张加密货币卡`;
     }
@@ -227,6 +255,12 @@ export const App: React.FC = () => {
       { icon: 'fa-solid fa-cloud', title: '全球云基础设施' },
       { icon: 'fa-brands fa-github', title: 'GitHub 开发者开源生态' },
       { icon: 'fa-solid fa-server', title: '永久免费算力与 VPS' },
+    ],
+    'account': [
+      { icon: 'fa-solid fa-user-shield', title: '管理员身份认证' },
+      { icon: 'fa-solid fa-key', title: 'API 站点登录令牌' },
+      { icon: 'fa-solid fa-server', title: 'API 站点管理后台' },
+      { icon: 'fa-solid fa-sliders', title: '公益站拓扑配置' },
     ],
   };
 
@@ -305,7 +339,7 @@ export const App: React.FC = () => {
             >
               <i className="fa-solid fa-wand-magic-sparkles opacity-75 mr-1 text-[11px]" />
               <span>AI 公益站</span>
-              <span className="pill-badge">{AI_STATIONS.length}</span>
+              <span className="pill-badge">{aiStationCount}</span>
             </button>
 
             <button
@@ -326,6 +360,15 @@ export const App: React.FC = () => {
               <i className="fa-solid fa-gift opacity-75 mr-1 text-[11px]" />
               <span>羊毛福利</span>
               <span className="pill-badge">{PERKS.length}</span>
+            </button>
+
+            <button
+              type="button"
+              className={`pill ${currentTab === 'account' ? 'active' : ''}`}
+              onClick={() => handleTabChange('account')}
+            >
+              <i className="fa-solid fa-user-shield opacity-75 mr-1 text-[11px]" />
+              <span>用户</span>
             </button>
           </nav>
 
@@ -374,7 +417,7 @@ export const App: React.FC = () => {
             >
               <div className="stat-icon">%</div>
               <div className="stat-value">
-                <AnimatedCounter target={AI_STATIONS.length} suffix="个" duration={1000} />
+                <AnimatedCounter target={aiStationCount} suffix="个" duration={1000} />
               </div>
               <div className="stat-label">AI 公益站节点</div>
             </div>
@@ -419,7 +462,11 @@ export const App: React.FC = () => {
 
           {currentTab === 'ai-hub' && (
             <AiStationGrid
-              stations={AI_STATIONS}
+              stations={hub.stations}
+              channelCount={hub.mergedMeta.channelCount}
+              upstreamCount={hub.mergedMeta.upstreamCount}
+              apiEndpoint={hub.endpoint}
+              apiModelCount={hub.models.length}
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
               onSelectStation={handleSelectAiStation}
@@ -441,6 +488,25 @@ export const App: React.FC = () => {
               searchQuery={searchQuery}
               onSearchChange={setSearchQuery}
               onSelectPerk={handleSelectPerk}
+            />
+          )}
+
+          {currentTab === 'account' && (
+            <AccountPanel
+              endpoint={hub.endpoint}
+              onEndpointChange={hub.handleEndpointChange}
+              isLoading={hub.isLoading}
+              error={hub.error}
+              statusData={hub.statusData}
+              models={hub.models}
+              stations={hub.stations}
+              onRefresh={hub.refresh}
+              onPersistStations={hub.persistStations}
+              onResetStations={hub.resetStations}
+              isAdmin={hub.isAdmin}
+              adminSession={hub.adminSession}
+              onLogin={hub.handleAdminLogin}
+              onLogout={hub.handleAdminLogout}
             />
           )}
         </main>

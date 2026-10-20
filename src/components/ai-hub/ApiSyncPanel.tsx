@@ -13,13 +13,15 @@ interface ApiSyncPanelProps {
   onRefresh: () => void;
   onOpenBestConfig: () => void;
   onOpenImport: () => void;
-  /** Admin mode unlocks the management controls; visitors see display only. */
-  isAdmin: boolean;
   adminDisplayName?: string;
-  onRequestLogin: () => void;
   onAdminLogout: () => void;
 }
 
+/**
+ * Admin-only management console for the API station. Rendered exclusively
+ * inside the 用户 tab after a verified admin login — visitors never see
+ * this component.
+ */
 export const ApiSyncPanel: React.FC<ApiSyncPanelProps> = ({
   endpoint,
   onEndpointChange,
@@ -30,9 +32,7 @@ export const ApiSyncPanel: React.FC<ApiSyncPanelProps> = ({
   onRefresh,
   onOpenBestConfig,
   onOpenImport,
-  isAdmin,
   adminDisplayName,
-  onRequestLogin,
   onAdminLogout,
 }) => {
   const [isEditingUrl, setIsEditingUrl] = useState(false);
@@ -134,44 +134,29 @@ export const ApiSyncPanel: React.FC<ApiSyncPanelProps> = ({
 
         {/* Right: Actions */}
         <div className="flex flex-wrap items-center gap-2">
-          {isAdmin ? (
-            <>
-              {/* Station Import & Update Button (admin only) */}
-              <button
-                type="button"
-                onClick={onOpenImport}
-                className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] shadow-sm hover:bg-[var(--paper-soft)] active:scale-95 transition-all"
-                title="导入渠道配置、更新 API 模型映射或管理备份"
-              >
-                <UiIcon name="download" size={12} />
-                <span>导入 / 更新中心</span>
-              </button>
+          {/* Station Import & Update Button */}
+          <button
+            type="button"
+            onClick={onOpenImport}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1.5 text-xs font-medium text-[var(--ink)] shadow-sm hover:bg-[var(--paper-soft)] active:scale-95 transition-all"
+            title="导入渠道配置、更新 API 模型映射或管理备份"
+          >
+            <UiIcon name="download" size={12} />
+            <span>导入 / 更新中心</span>
+          </button>
 
-              {/* Best Config Master Button (admin only) */}
-              <button
-                type="button"
-                onClick={onOpenBestConfig}
-                className="inline-flex items-center gap-1.5 rounded-full bg-[var(--ink)] px-3.5 py-1.5 text-xs font-medium text-[var(--paper)] shadow-sm hover:opacity-90 active:scale-95 transition-all"
-                title="根据当前 API 站点配置生成最佳公益站分层拓扑与一键导入 JSON"
-              >
-                <UiIcon name="sparkles" size={12} className="text-amber-300" />
-                <span>最佳公益站配置</span>
-              </button>
-            </>
-          ) : (
-            /* Visitors get a single discreet login entry */
-            <button
-              type="button"
-              onClick={onRequestLogin}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[var(--line)] bg-[var(--paper)] px-3 py-1.5 text-xs font-medium text-[var(--ink-soft)] shadow-sm hover:text-[var(--ink)] hover:bg-[var(--paper)] active:scale-95 transition-all"
-              title="管理员登录后可进行站点管理与配置更新"
-            >
-              <UiIcon name="shield" size={12} />
-              <span>管理员登录</span>
-            </button>
-          )}
+          {/* Best Config Master Button */}
+          <button
+            type="button"
+            onClick={onOpenBestConfig}
+            className="inline-flex items-center gap-1.5 rounded-full bg-[var(--ink)] px-3.5 py-1.5 text-xs font-medium text-[var(--paper)] shadow-sm hover:opacity-90 active:scale-95 transition-all"
+            title="根据当前 API 站点配置生成最佳公益站分层拓扑与一键导入 JSON"
+          >
+            <UiIcon name="sparkles" size={12} className="text-amber-300" />
+            <span>最佳公益站配置</span>
+          </button>
 
-          {/* Refresh Button (public, read-only) */}
+          {/* Refresh Button (read-only) */}
           <button
             type="button"
             onClick={onRefresh}
@@ -189,47 +174,43 @@ export const ApiSyncPanel: React.FC<ApiSyncPanelProps> = ({
             />
           </button>
 
-          {/* Custom Station Toggle (admin only) */}
-          {isAdmin && (
-            <button
-              type="button"
-              onClick={() => {
-                setTempUrl(endpoint);
-                setIsEditingUrl(!isEditingUrl);
-              }}
-              className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1.5 text-xs text-[var(--ink-soft)] transition-all ${
-                isEditingUrl
-                  ? 'border-[var(--ink)] bg-[var(--paper)] text-[var(--ink)]'
-                  : 'border-[var(--line)] bg-[var(--paper)] hover:text-[var(--ink)]'
-              }`}
-              title="更换或关联其他 API 站点"
-            >
-              <UiIcon name="tool" size={12} />
-              <span>{isEditingUrl ? '收起' : '切换站点'}</span>
-            </button>
-          )}
+          {/* Custom Station Toggle */}
+          <button
+            type="button"
+            onClick={() => {
+              setTempUrl(endpoint);
+              setIsEditingUrl(!isEditingUrl);
+            }}
+            className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1.5 text-xs text-[var(--ink-soft)] transition-all ${
+              isEditingUrl
+                ? 'border-[var(--ink)] bg-[var(--paper)] text-[var(--ink)]'
+                : 'border-[var(--line)] bg-[var(--paper)] hover:text-[var(--ink)]'
+            }`}
+            title="更换或关联其他 API 站点"
+          >
+            <UiIcon name="tool" size={12} />
+            <span>{isEditingUrl ? '收起' : '切换站点'}</span>
+          </button>
 
           {/* Admin identity & logout */}
-          {isAdmin && (
-            <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
-              <UiIcon name="shield" size={12} />
-              <span>{adminDisplayName || '管理员'}</span>
-              <button
-                type="button"
-                onClick={onAdminLogout}
-                className="ml-0.5 rounded-full p-0.5 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
-                title="退出管理员模式"
-                aria-label="退出管理员模式"
-              >
-                <UiIcon name="x" size={11} />
-              </button>
-            </div>
-          )}
+          <div className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50/70 px-2.5 py-1 text-xs font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
+            <UiIcon name="shield" size={12} />
+            <span>{adminDisplayName || '管理员'}</span>
+            <button
+              type="button"
+              onClick={onAdminLogout}
+              className="ml-0.5 rounded-full p-0.5 text-emerald-700 hover:bg-emerald-100 hover:text-emerald-900 dark:text-emerald-300 dark:hover:bg-emerald-900/50"
+              title="退出管理员模式"
+              aria-label="退出管理员模式"
+            >
+              <UiIcon name="x" size={11} />
+            </button>
+          </div>
         </div>
       </div>
 
       {/* Collapsible Edit Station Form */}
-      {isEditingUrl && isAdmin && (
+      {isEditingUrl && (
         <form
           onSubmit={handleApplyUrl}
           className="mt-3.5 flex flex-col gap-2 rounded-xl border border-[var(--line)] bg-[var(--paper)] p-3 text-xs md:flex-row md:items-center"

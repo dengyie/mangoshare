@@ -17,4 +17,6 @@ export interface AiStationItem {
   tutorial?: string;
   balance?: string;
   rpmLimit?: string;
+  /** Backend-measured upstream latency (ms) from GET /api/public_stations. */
+  responseTime?: number;
 }

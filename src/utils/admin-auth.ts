@@ -122,7 +122,9 @@ export async function loginAdmin(
   }
   const { access_token, access_expires_at, user } = body.data;
   if (!access_token || !user || typeof user.role !== 'number') {
-    throw new Error('登录响应缺少必要字段');
+    // A two-factor-enabled account returns a challenge instead of a token;
+    // this static site cannot complete that flow, so say so explicitly.
+    throw new Error('登录响应缺少必要字段（若该账号开启了两步验证，请先在 API 站关闭后再试）');
   }
   if (!isAdminRole(user.role)) {
     throw new Error('该账号不是管理员，无法进入管理模式');
@@ -141,19 +143,34 @@ export async function loginAdmin(
 
 /**
  * Re-validates a restored session against the backend (GET /api/user/self).
- * Returns fresh user data, or null when the token is expired/revoked or the
- * backend is unreachable — callers treat null as "downgrade to visitor mode".
+ * Tri-state so callers never conflate "bad token" with "backend unreachable":
+ * - 'valid'      token works and the role is still admin;
+ * - 'invalid'    the server actively rejected the token (401/403/success=false
+ *                or role downgrade) → caller must drop the session;
+ * - 'unreachable' network error, 5xx or malformed response → keep the session
+ *                and retry later; a flaky network must not log admins out.
  */
-export async function verifyAdminSession(session: AdminSession): Promise<boolean> {
+export type AdminSessionVerifyResult = 'valid' | 'invalid' | 'unreachable';
+
+export async function verifyAdminSession(session: AdminSession): Promise<AdminSessionVerifyResult> {
   try {
     const res = await fetch(`${session.baseUrl}/api/user/self`, {
       headers: { Authorization: `Bearer ${session.token}` },
     });
-    if (!res.ok) return false;
-    const body = await res.json();
-    return !!body?.success && isAdminRole(body?.data?.role);
+    if (res.status === 401 || res.status === 403) return 'invalid';
+    let body: { success?: boolean; data?: { role?: number } } | null = null;
+    try {
+      body = await res.json();
+    } catch {
+      return 'unreachable';
+    }
+    if (body && body.success === false) return 'invalid';
+    if (res.ok && body?.success) {
+      return isAdminRole(Number(body?.data?.role)) ? 'valid' : 'invalid';
+    }
+    return 'unreachable';
   } catch {
-    return false;
+    return 'unreachable';
   }
 }
 

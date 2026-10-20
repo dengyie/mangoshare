@@ -1,4 +1,4 @@
-export type TabType = 'u-cards' | 'sim-cards' | 'ai-hub' | 'credit-cards' | 'perks';
+export type TabType = 'u-cards' | 'sim-cards' | 'ai-hub' | 'credit-cards' | 'perks' | 'account';
 
 export interface TabConfig {
   id: TabType;
