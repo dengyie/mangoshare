@@ -1,0 +1,71 @@
+name: Deploy to Production
+
+# Push to main = build + deploy to nl-vps via google-vps relay (GitHub runners
+# have no IPv6, and the LeaseWeb IPv4 :22 endpoint is not this host's sshd).
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Build
+        run: |
+          npm ci
+          npm run build
+
+      - name: Setup SSH keys
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$RELAY_KEY" > ~/.ssh/relay_key
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/relay_key ~/.ssh/deploy_key
+          cat >> ~/.ssh/config << 'CFG'
+          Host relay
+            HostName 35.212.179.13
+            User ci-relay
+            IdentityFile ~/.ssh/relay_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking accept-new
+
+          Host nl-target
+            HostName 10.144.144.12
+            User deploy
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            ProxyJump relay
+            StrictHostKeyChecking accept-new
+          CFG
+          chmod 600 ~/.ssh/config
+        env:
+          RELAY_KEY: ${{ secrets.CI_RELAY_SSH_KEY }}
+          DEPLOY_KEY: ${{ secrets.NL_VPS_DEPLOY_SSH_KEY }}
+
+      - name: Deploy (rsync over relay + nginx reload)
+        run: |
+          rsync -az --delete -e "ssh -F ~/.ssh/config" dist/ nl-target:/var/www/mangoshare/
+          ssh -F ~/.ssh/config nl-target 'sudo -n /usr/sbin/nginx -t && sudo -n /usr/bin/systemctl reload nginx'
+          echo "Deployed $(git rev-parse --short HEAD) at $(date -u +%FT%TZ)"
+
+      - name: Verify production
+        run: |
+          sleep 3
+          code=$(curl -s -o /dev/null -w '%{http_code}' https://share.mangoqwq.com)
+          echo "HTTP status: $code"
+          [ "$code" = "200" ] || { echo "Production check failed"; exit 1; }
