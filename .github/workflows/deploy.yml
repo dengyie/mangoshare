@@ -59,8 +59,8 @@ jobs:
 
       - name: Deploy (rsync over relay + nginx reload)
         run: |
-          rsync -az --delete -e "ssh -F ~/.ssh/config" dist/ nl-target:/var/www/mangoshare/
-          ssh -F ~/.ssh/config nl-target 'sudo -n /usr/sbin/nginx -t && sudo -n /usr/bin/systemctl reload nginx'
+          rsync -az --delete -e "ssh -F $HOME/.ssh/config" dist/ nl-target:/var/www/mangoshare/
+          ssh -F $HOME/.ssh/config nl-target 'sudo -n /usr/sbin/nginx -t && sudo -n /usr/bin/systemctl reload nginx'
           echo "Deployed $(git rev-parse --short HEAD) at $(date -u +%FT%TZ)"
 
       - name: Verify production
