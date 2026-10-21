@@ -80,29 +80,43 @@ interface LoginResponse {
     access_token?: string;
     access_expires_at?: number;
     user?: { username?: string; display_name?: string; role?: number };
+    require_verification?: boolean;
+    flow_token?: string;
+    methods?: { method: string; available: boolean }[];
   };
 }
 
 /**
- * Logs into the API station and returns an admin session.
- * Throws with a user-facing message when credentials are wrong, the account
- * is not an admin, or the backend is unreachable.
+ * First login step result: either a full admin session (no 2FA on the
+ * account) or a two-factor challenge holding the backend flow_token that
+ * completeAdminLogin consumes.
  */
-export async function loginAdmin(
-  baseUrl: string,
-  username: string,
-  password: string,
-  timeoutMs = 10000
-): Promise<AdminSession> {
-  const base = normalizeAdminBase(baseUrl);
+export type AdminLoginAttempt =
+  | { kind: 'session'; session: AdminSession }
+  | { kind: '2fa'; flowToken: string };
+
+interface RawLoginArgs {
+  base: string;
+  path: string;
+  payload: Record<string, string>;
+  fallbackUsername: string;
+  timeoutMs: number;
+}
+
+async function postLogin(
+  base: string,
+  path: string,
+  payload: Record<string, string>,
+  timeoutMs: number
+): Promise<LoginResponse> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
-    res = await fetch(`${base}/api/user/login`, {
+    res = await fetch(`${base}${path}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
+      body: JSON.stringify(payload),
       signal: controller.signal,
     });
   } catch {
@@ -110,35 +124,93 @@ export async function loginAdmin(
   } finally {
     clearTimeout(timer);
   }
-
-  let body: LoginResponse;
   try {
-    body = await res.json();
+    return (await res.json()) as LoginResponse;
   } catch {
     throw new Error('登录响应解析失败，请稍后重试');
   }
-  if (!res.ok || !body.success || !body.data) {
-    throw new Error(body.message || `登录失败（HTTP ${res.status}）`);
+}
+
+function parseLoginData(
+  base: string,
+  body: LoginResponse,
+  fallbackUsername: string
+): AdminLoginAttempt {
+  if (!body.success || !body.data) {
+    throw new Error(body.message || '登录失败，请检查用户名与密码');
   }
-  const { access_token, access_expires_at, user } = body.data;
+  const data = body.data;
+  // Two-factor-enabled accounts answer with a challenge instead of a token.
+  if (data.require_verification && data.flow_token) {
+    const twoFAOffered = (data.methods || []).some(
+      (m) => m.method === '2fa' && m.available !== false
+    );
+    if (twoFAOffered || (data.methods || []).length === 0) {
+      return { kind: '2fa', flowToken: data.flow_token };
+    }
+    throw new Error('该账号需要额外验证，但暂无可用验证方式');
+  }
+  const { access_token, access_expires_at, user } = data;
   if (!access_token || !user || typeof user.role !== 'number') {
-    // A two-factor-enabled account returns a challenge instead of a token;
-    // this static site cannot complete that flow, so say so explicitly.
-    throw new Error('登录响应缺少必要字段（若该账号开启了两步验证，请先在 API 站关闭后再试）');
+    throw new Error('登录响应缺少必要字段，请稍后重试');
   }
   if (!isAdminRole(user.role)) {
     throw new Error('该账号不是管理员，无法进入管理模式');
   }
   return {
-    baseUrl: base,
-    username: user.username || username,
-    displayName: user.display_name || user.username || username,
-    role: user.role,
-    token: access_token,
-    // Backend sends unix seconds; fall back to a conservative short window
-    // if the field is missing so the session never outlives its token.
-    expiresAt: access_expires_at ? access_expires_at * 1000 : Date.now() + 14 * 60 * 1000,
+    kind: 'session',
+    session: {
+      baseUrl: base,
+      username: user.username || fallbackUsername,
+      displayName: user.display_name || user.username || fallbackUsername,
+      role: user.role,
+      token: access_token,
+      // Backend sends unix seconds; fall back to a conservative short window
+      // if the field is missing so the session never outlives its token.
+      expiresAt: access_expires_at ? access_expires_at * 1000 : Date.now() + 14 * 60 * 1000,
+    },
   };
+}
+
+/**
+ * Logs into the API station with username + password. Accounts without 2FA
+ * resolve straight to a session; accounts with 2FA return a challenge that
+ * must be finished via completeAdminLogin.
+ */
+export async function startAdminLogin(
+  baseUrl: string,
+  username: string,
+  password: string,
+  timeoutMs = 10000
+): Promise<AdminLoginAttempt> {
+  const base = normalizeAdminBase(baseUrl);
+  const body = await postLogin(base, '/api/user/login', { username, password }, timeoutMs);
+  return parseLoginData(base, body, username);
+}
+
+/**
+ * Second login step for 2FA accounts: exchanges the flow_token from
+ * startAdminLogin plus a TOTP/backup code for a full admin session.
+ */
+export async function completeAdminLogin(
+  baseUrl: string,
+  flowToken: string,
+  code: string,
+  fallbackUsername = '',
+  timeoutMs = 10000
+): Promise<AdminSession> {
+  const base = normalizeAdminBase(baseUrl);
+  const body = await postLogin(
+    base,
+    '/api/user/login/2fa',
+    { flow_token: flowToken, code: code.trim() },
+    timeoutMs
+  );
+  const attempt = parseLoginData(base, body, fallbackUsername);
+  if (attempt.kind !== 'session') {
+    throw new Error('验证响应缺少必要字段，请稍后重试');
+  }
+  return attempt.session;
 }
 
 /**

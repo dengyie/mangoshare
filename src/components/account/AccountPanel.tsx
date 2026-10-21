@@ -2,7 +2,11 @@ import React, { useMemo, useState } from 'react';
 import { AiStationItem as AiStationItemType } from '../../types/ai-station';
 import { ApiStationStatus } from '../../types/api-sync';
 import { analyzeTopology } from '../../utils/api-station-sync';
-import { AdminSession, loginAdmin } from '../../utils/admin-auth';
+import {
+  AdminSession,
+  completeAdminLogin,
+  startAdminLogin,
+} from '../../utils/admin-auth';
 import { ApiSyncPanel } from '../ai-hub/ApiSyncPanel';
 import { BestConfigModal } from '../ai-hub/BestConfigModal';
 import { StationImportModal } from '../ai-hub/StationImportModal';
@@ -50,6 +54,8 @@ export const AccountPanel: React.FC<AccountPanelProps> = ({
   const [password, setPassword] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [pendingFlowToken, setPendingFlowToken] = useState<string | null>(null);
+  const [twoFaCode, setTwoFaCode] = useState('');
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
   const [isBestConfigOpen, setIsBestConfigOpen] = useState(false);
 
@@ -77,15 +83,54 @@ export const AccountPanel: React.FC<AccountPanelProps> = ({
     setIsSubmitting(true);
     setErrorMessage(null);
     try {
-      const session = await loginAdmin(endpoint, username.trim(), password);
-      setPassword('');
-      setUsername('');
-      onLogin(session);
+      const attempt = await startAdminLogin(endpoint, username.trim(), password);
+      if (attempt.kind === 'session') {
+        setPassword('');
+        setUsername('');
+        onLogin(attempt.session);
+      } else {
+        setPassword('');
+        setPendingFlowToken(attempt.flowToken);
+        setErrorMessage(null);
+      }
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : '登录失败，请稍后重试');
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  const handleTwoFaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (isSubmitting || !pendingFlowToken) return;
+    if (!twoFaCode.trim()) {
+      setErrorMessage('请输入两步验证码');
+      return;
+    }
+    setIsSubmitting(true);
+    setErrorMessage(null);
+    try {
+      const session = await completeAdminLogin(
+        endpoint,
+        pendingFlowToken,
+        twoFaCode,
+        username.trim()
+      );
+      setTwoFaCode('');
+      setPendingFlowToken(null);
+      setUsername('');
+      onLogin(session);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : '验证失败，请稍后重试');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const cancelTwoFa = () => {
+    setPendingFlowToken(null);
+    setTwoFaCode('');
+    setErrorMessage(null);
   };
 
   // ---- Visitor view: login form only, zero management surface ----------
@@ -94,57 +139,112 @@ export const AccountPanel: React.FC<AccountPanelProps> = ({
       <div className="mx-auto flex max-w-md flex-col gap-4 rounded-2xl border border-[var(--line)] bg-[var(--paper-soft)] p-6 shadow-sm">
         <div className="flex items-center gap-2">
           <UiIcon name="shield" size={15} className="text-[var(--ink)]" />
-          <h2 className="text-sm font-semibold tracking-wide text-[var(--ink)]">管理员登录</h2>
+          <h2 className="text-sm font-semibold tracking-wide text-[var(--ink)]">
+            {pendingFlowToken ? '两步验证' : '管理员登录'}
+          </h2>
         </div>
 
-        <p className="text-xs leading-relaxed text-[var(--ink-soft)]">
-          使用 API 站点（<span className="font-mono">{domainDisplay}</span>）的管理员账号登录后，
-          可进行公益站拓扑更新、渠道导入与最佳配置等管理操作。普通访客无需登录，
-          浏览其他标签页即可；会话有效期与后端登录令牌一致（15 分钟）。
-        </p>
+        {pendingFlowToken ? (
+          <>
+            <p className="text-xs leading-relaxed text-[var(--ink-soft)]">
+              账号 <span className="font-mono">{username || 'admin'}</span> 已开启两步验证。
+              请输入认证器 App 生成的 6 位动态码，或使用备用恢复码完成登录。
+            </p>
+            <form onSubmit={handleTwoFaSubmit} className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1 text-xs font-medium text-[var(--ink-soft)]">
+                动态验证码
+                <input
+                  type="text"
+                  value={twoFaCode}
+                  onChange={(e) => setTwoFaCode(e.target.value)}
+                  autoComplete="one-time-code"
+                  autoFocus
+                  inputMode="text"
+                  className="rounded-lg border border-[var(--line)] bg-transparent px-3 py-2 font-mono text-sm tracking-widest text-[var(--ink)] outline-none focus:border-[var(--ink)]"
+                  placeholder="6 位动态码或备用码"
+                />
+              </label>
 
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <label className="flex flex-col gap-1 text-xs font-medium text-[var(--ink-soft)]">
-            用户名
-            <input
-              type="text"
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              autoComplete="username"
-              className="rounded-lg border border-[var(--line)] bg-transparent px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--ink)]"
-              placeholder="API 站管理员用户名"
-            />
-          </label>
-          <label className="flex flex-col gap-1 text-xs font-medium text-[var(--ink-soft)]">
-            密码
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              autoComplete="current-password"
-              className="rounded-lg border border-[var(--line)] bg-transparent px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--ink)]"
-              placeholder="API 站管理员密码"
-            />
-          </label>
+              {errorMessage && (
+                <div className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+                  <UiIcon name="alert-triangle" size={13} />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
 
-          {errorMessage && (
-            <div className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
-              <UiIcon name="alert-triangle" size={13} />
-              <span>{errorMessage}</span>
-            </div>
-          )}
+              <div className="mt-1 flex items-center gap-2">
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className={`inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-[var(--ink)] px-4 py-2 text-sm font-medium text-[var(--paper)] transition-all hover:opacity-90 active:scale-[0.98] ${
+                    isSubmitting ? 'cursor-not-allowed opacity-60' : ''
+                  }`}
+                >
+                  <UiIcon name="lock" size={14} className={isSubmitting ? 'animate-pulse' : ''} />
+                  <span>{isSubmitting ? '正在验证…' : '验证并登录'}</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={cancelTwoFa}
+                  className="rounded-lg border border-[var(--line)] px-3 py-2 text-xs text-[var(--ink-soft)] transition-colors hover:bg-[var(--paper-muted)] hover:text-[var(--ink)]"
+                >
+                  返回
+                </button>
+              </div>
+            </form>
+          </>
+        ) : (
+          <>
+            <p className="text-xs leading-relaxed text-[var(--ink-soft)]">
+              使用 API 站点（<span className="font-mono">{domainDisplay}</span>）的管理员账号登录后，
+              可进行公益站拓扑更新、渠道导入与最佳配置等管理操作。普通访客无需登录，
+              浏览其他标签页即可；会话有效期与后端登录令牌一致（15 分钟）。
+            </p>
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className={`mt-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--ink)] px-4 py-2 text-sm font-medium text-[var(--paper)] transition-all hover:opacity-90 active:scale-[0.98] ${
-              isSubmitting ? 'cursor-not-allowed opacity-60' : ''
-            }`}
-          >
-            <UiIcon name="shield" size={14} className={isSubmitting ? 'animate-pulse' : ''} />
-            <span>{isSubmitting ? '正在验证…' : '登录管理员'}</span>
-          </button>
-        </form>
+            <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+              <label className="flex flex-col gap-1 text-xs font-medium text-[var(--ink-soft)]">
+                用户名
+                <input
+                  type="text"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  autoComplete="username"
+                  className="rounded-lg border border-[var(--line)] bg-transparent px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--ink)]"
+                  placeholder="API 站管理员用户名"
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-xs font-medium text-[var(--ink-soft)]">
+                密码
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  autoComplete="current-password"
+                  className="rounded-lg border border-[var(--line)] bg-transparent px-3 py-2 text-sm text-[var(--ink)] outline-none focus:border-[var(--ink)]"
+                  placeholder="API 站管理员密码"
+                />
+              </label>
+
+              {errorMessage && (
+                <div className="flex items-center gap-1.5 rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+                  <UiIcon name="alert-triangle" size={13} />
+                  <span>{errorMessage}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSubmitting}
+                className={`mt-1 inline-flex items-center justify-center gap-1.5 rounded-lg bg-[var(--ink)] px-4 py-2 text-sm font-medium text-[var(--paper)] transition-all hover:opacity-90 active:scale-[0.98] ${
+                  isSubmitting ? 'cursor-not-allowed opacity-60' : ''
+                }`}
+              >
+                <UiIcon name="shield" size={14} className={isSubmitting ? 'animate-pulse' : ''} />
+                <span>{isSubmitting ? '正在验证…' : '登录管理员'}</span>
+              </button>
+            </form>
+          </>
+        )}
       </div>
     );
   }
