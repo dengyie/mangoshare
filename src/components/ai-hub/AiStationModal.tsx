@@ -4,6 +4,7 @@ import { getAiStationArt } from '../../utils/card-art';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useModalLock } from '../../utils/use-modal-lock';
 import { generateNewApiChannelJson } from '../../utils/api-station-sync';
+import { ItemMarkControl } from '../account/ItemMarkControl';
 import { UiIcon } from '../awesome-ui/UiIcon';
 
 interface AiStationModalProps {
@@ -86,6 +87,9 @@ export const AiStationModal: React.FC<AiStationModalProps> = ({ station, onClose
   })();
 
   const channelTypeLabel = channelTypeDesc.match(/^Type (\d+)/)?.[1] ?? '?';
+
+  // upstream-* 动态卡的 id 由后端探测结果生成，刷新后可能变化，不参与勾选。
+  const markable = !station.id.startsWith('upstream-');
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -176,6 +180,9 @@ export const AiStationModal: React.FC<AiStationModalProps> = ({ station, onClose
             <span>{shareCopied ? '已复制直达链接' : '分享此站'}</span>
           </button>
         </div>
+
+        {/* 我的标记（已开通 / 待开通） */}
+        {markable && <ItemMarkControl itemType="ai-station" itemId={station.id} />}
 
         {/* Supported Models */}
         {station.models && station.models.length > 0 && (

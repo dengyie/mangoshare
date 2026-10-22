@@ -24,6 +24,7 @@ import { CreditCardModal } from './components/credit-card/CreditCardModal';
 import { PerkGrid } from './components/perk/PerkGrid';
 import { PerkModal } from './components/perk/PerkModal';
 import { useAiHubData } from './hooks/useAiHubData';
+import { UserAccountProvider, useUserAccount } from './hooks/useUserAccount';
 
 import { FluidContourBackdrop } from './components/awesome-ui/FluidContourBackdrop';
 import { AnimatedCounter } from './components/awesome-ui/AnimatedCounter';
@@ -44,6 +45,27 @@ function parseHashLocation() {
   }
   return { tab, cardId };
 }
+
+/**
+ * 用户中心入口（页脚）。顶部 tab 只承载知识/资源栏目，登录、注册与
+ * 站点管理的统一入口收敛在页面底部；已登录时直接展示用户名。
+ */
+const AccountFooterLink: React.FC<{ onOpen: () => void }> = ({ onOpen }) => {
+  const { user } = useUserAccount();
+  return (
+    <p className="account-foot-link">
+      <button
+        type="button"
+        className="account-foot-entry"
+        onClick={onOpen}
+        title="登录 / 注册 / 我的服务"
+      >
+        <i className="fa-solid fa-user-shield opacity-75 mr-1 text-[11px]" />
+        <span>{user ? `用户中心 · ${user.displayName || user.email}` : '登录 / 注册'}</span>
+      </button>
+    </p>
+  );
+};
 
 export const App: React.FC = () => {
   // Tab state synced with URL hash (supporting query parameters)
@@ -265,7 +287,7 @@ export const App: React.FC = () => {
   };
 
   return (
-    <>
+    <UserAccountProvider>
       {/* Dynamic WebGL Simplex Noise Contour Backdrop */}
       <FluidContourBackdrop
         inkColor={[0.24, 0.24, 0.25]}
@@ -362,14 +384,7 @@ export const App: React.FC = () => {
               <span className="pill-badge">{PERKS.length}</span>
             </button>
 
-            <button
-              type="button"
-              className={`pill ${currentTab === 'account' ? 'active' : ''}`}
-              onClick={() => handleTabChange('account')}
-            >
-              <i className="fa-solid fa-user-shield opacity-75 mr-1 text-[11px]" />
-              <span>用户</span>
-            </button>
+            {/* 用户中心入口已移至页脚：顶部 tab 只保留知识/资源栏目 */}
           </nav>
 
           {/* 4-Column Stats Bar - Interactive Tab Switchers */}
@@ -513,6 +528,7 @@ export const App: React.FC = () => {
 
         {/* Footnote */}
         <footer className="foot-note anim" style={{ '--d': '0.7s' } as React.CSSProperties}>
+          <AccountFooterLink onOpen={() => handleTabChange('account')} />
           <p>
             资料来自各卡官网与公开信息整理，可能随政策调整而变化，开卡前请以官方页面为准。<br />
             如有错漏或想了解的卡/资源不在列表内，欢迎
@@ -562,6 +578,6 @@ export const App: React.FC = () => {
           <UiIcon name="chevron-up" size={16} strokeWidth={2.5} />
         </button>
       </div>
-    </>
+    </UserAccountProvider>
   );
 };

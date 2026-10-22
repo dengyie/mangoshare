@@ -1,6 +1,7 @@
 import React from 'react';
 import { CreditCardItem as CreditCardItemType } from '../../types/credit-card';
 import { getCreditCardArt } from '../../utils/card-art';
+import { ItemStatusBadge } from '../account/ItemMarkControl';
 
 interface CreditCardItemProps {
   card: CreditCardItemType;
@@ -41,6 +42,7 @@ export const CreditCardItem: React.FC<CreditCardItemProps> = ({ card, onSelect }
     >
       <span className="cell-img" onPointerMove={handlePointerMove}>
         <img src={cardArt} alt={`${card.name} 卡面`} loading="lazy" />
+        <ItemStatusBadge itemType="credit-card" itemId={card.id} />
       </span>
       <span className="cell-meta">
         <div className="cell-name">

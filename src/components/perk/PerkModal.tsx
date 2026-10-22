@@ -3,6 +3,7 @@ import { PerkItem } from '../../types/perk';
 import { getPerkArt } from '../../utils/card-art';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useModalLock } from '../../utils/use-modal-lock';
+import { ItemMarkControl } from '../account/ItemMarkControl';
 import { UiIcon } from '../awesome-ui/UiIcon';
 
 interface PerkModalProps {
@@ -105,6 +106,9 @@ export const PerkModal: React.FC<PerkModalProps> = ({ perk, onClose }) => {
             <span>{shareCopied ? '已复制直达链接' : '分享福利'}</span>
           </button>
         </div>
+
+        {/* 我的标记（已开通 / 待开通） */}
+        <ItemMarkControl itemType="perk" itemId={perk.id} />
 
         {/* Summary & Value Quote */}
         <div style={{ background: 'var(--paper-soft)', border: '1px solid var(--line)', borderRadius: '12px', padding: '0.85rem 1rem', marginBottom: '1.2rem', fontSize: '0.85rem', lineHeight: '1.6' }}>

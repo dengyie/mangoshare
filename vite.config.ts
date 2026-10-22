@@ -6,6 +6,14 @@ export default defineConfig({
   server: {
     port: 3000,
     host: true,
+    proxy: {
+      // Local dev: same-origin account backend (Go service on loopback).
+      // In production nginx proxies /account-api/ to the same service.
+      '/account-api': {
+        target: 'http://127.0.0.1:8090',
+        changeOrigin: false,
+      },
+    },
   },
   build: {
     outDir: 'dist',

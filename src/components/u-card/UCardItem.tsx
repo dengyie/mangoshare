@@ -1,5 +1,6 @@
 import React from 'react';
 import { UCardItem as UCardItemType } from '../../types/u-card';
+import { ItemStatusBadge } from '../account/ItemMarkControl';
 
 interface UCardItemProps {
   card: UCardItemType;
@@ -33,6 +34,7 @@ export const UCardItem: React.FC<UCardItemProps> = ({ card, onSelect }) => {
     >
       <span className="cell-img" onPointerMove={handlePointerMove}>
         <img src={img.startsWith('/') ? img : `/${img}`} alt={`${brand} 卡面`} loading="lazy" />
+        <ItemStatusBadge itemType="u-card" itemId={card.slug} />
       </span>
       <span className="cell-meta">
         <div className="cell-name">{brand}</div>

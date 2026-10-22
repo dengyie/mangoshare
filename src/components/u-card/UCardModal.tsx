@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { UCardItem } from '../../types/u-card';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useModalLock } from '../../utils/use-modal-lock';
+import { ItemMarkControl } from '../account/ItemMarkControl';
 import { UiIcon } from '../awesome-ui/UiIcon';
 
 interface UCardModalProps {
@@ -139,6 +140,9 @@ export const UCardModal: React.FC<UCardModalProps> = ({
             <span>{shareCopied ? '已复制直达链接' : '分享此卡'}</span>
           </button>
         </div>
+
+        {/* 我的标记（已开通 / 待开通） */}
+        <ItemMarkControl itemType="u-card" itemId={card.slug} />
 
         {/* Tags */}
         {tags && tags.length > 0 && (

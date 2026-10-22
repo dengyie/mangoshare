@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { AiStationItem as AiStationItemType } from '../../types/ai-station';
 import { getAiStationArt } from '../../utils/card-art';
+import { ItemStatusBadge } from '../account/ItemMarkControl';
 
 interface AiStationItemProps {
   station: AiStationItemType;
@@ -105,6 +106,9 @@ export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect 
     >
       <span className="cell-img" onPointerMove={handlePointerMove}>
         <img src={cardArt} alt={`${station.name} 卡面`} loading="lazy" />
+        {!station.id.startsWith('upstream-') && (
+          <ItemStatusBadge itemType="ai-station" itemId={station.id} />
+        )}
       </span>
       <span className="cell-meta">
         <div className="cell-name">

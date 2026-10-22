@@ -3,6 +3,7 @@ import { CreditCardItem } from '../../types/credit-card';
 import { getCreditCardArt } from '../../utils/card-art';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useModalLock } from '../../utils/use-modal-lock';
+import { ItemMarkControl } from '../account/ItemMarkControl';
 import { UiIcon } from '../awesome-ui/UiIcon';
 
 interface CreditCardModalProps {
@@ -125,6 +126,9 @@ export const CreditCardModal: React.FC<CreditCardModalProps> = ({ card, onClose 
             <span>{shareCopied ? '已复制直达链接' : '分享此卡'}</span>
           </button>
         </div>
+
+        {/* 我的标记（已开通 / 待开通） */}
+        <ItemMarkControl itemType="credit-card" itemId={card.id} />
 
         {/* Welcome Bonus & Cashback */}
         <div className="section-head">

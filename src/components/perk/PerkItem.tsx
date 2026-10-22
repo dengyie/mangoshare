@@ -1,6 +1,7 @@
 import React from 'react';
 import { PerkItem as PerkItemType } from '../../types/perk';
 import { getPerkArt } from '../../utils/card-art';
+import { ItemStatusBadge } from '../account/ItemMarkControl';
 import { UiIcon } from '../awesome-ui/UiIcon';
 
 interface PerkItemProps {
@@ -41,6 +42,7 @@ export const PerkItem: React.FC<PerkItemProps> = ({ perk, onSelect }) => {
     >
       <span className="cell-img" onPointerMove={handlePointerMove}>
         <img src={cardArt} alt={`${perk.name} 卡面`} loading="lazy" />
+        <ItemStatusBadge itemType="perk" itemId={perk.id} />
       </span>
       <span className="cell-meta">
         <div className="cell-name" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>

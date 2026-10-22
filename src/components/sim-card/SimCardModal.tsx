@@ -3,6 +3,7 @@ import { SimCardItem } from '../../types/sim-card';
 import { getSimCardArt } from '../../utils/card-art';
 import { copyToClipboard } from '../../utils/clipboard';
 import { useModalLock } from '../../utils/use-modal-lock';
+import { ItemMarkControl } from '../account/ItemMarkControl';
 import { UiIcon } from '../awesome-ui/UiIcon';
 
 interface SimCardModalProps {
@@ -125,6 +126,9 @@ export const SimCardModal: React.FC<SimCardModalProps> = ({ card, onClose }) => 
             <span>{shareCopied ? '已复制直达链接' : '分享此卡'}</span>
           </button>
         </div>
+
+        {/* 我的标记（已开通 / 待开通） */}
+        <ItemMarkControl itemType="sim-card" itemId={card.id} />
 
         {/* Tags */}
         {card.tags && card.tags.length > 0 && (

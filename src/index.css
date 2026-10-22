@@ -1114,6 +1114,118 @@ a {
   text-decoration-color: oklch(0.24 0.008 80 / 0.45);
 }
 
+/* ---------- 我的标记控件（详情弹窗三态勾选） ---------- */
+.item-mark-control {
+  margin-top: 1.2rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--line);
+}
+
+.item-mark-options {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.item-mark-option {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  padding: 0.55rem 0.75rem;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--paper);
+  color: var(--gray);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.item-mark-option:hover {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+
+.item-mark-option.active-opened {
+  border-color: #10b981;
+  background: rgba(16, 185, 129, 0.08);
+  color: #059669;
+}
+
+.item-mark-option.active-wanted {
+  border-color: #f59e0b;
+  background: rgba(245, 158, 11, 0.08);
+  color: #b45309;
+}
+
+.item-mark-clear {
+  opacity: 0.65;
+}
+
+.item-mark-hint {
+  margin-top: 0.5rem;
+  font-size: 0.72rem;
+  line-height: 1.6;
+  color: var(--gray);
+}
+
+/* ---------- 网格卡片角标（已开通 / 待开通） ---------- */
+.item-status-badge {
+  position: absolute;
+  top: 0.5rem;
+  left: 0.5rem;
+  z-index: 6;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  color: #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+  pointer-events: none;
+}
+
+.item-status-badge.opened {
+  background: rgba(5, 150, 105, 0.92);
+}
+
+.item-status-badge.wanted {
+  background: rgba(217, 119, 6, 0.92);
+}
+
+/* ---------- 页脚用户中心入口 ---------- */
+.account-foot-link {
+  margin: 0 0 0.75rem;
+}
+
+.account-foot-entry {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.45rem 1.1rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font-size: 0.83rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, transform 0.15s ease;
+}
+
+.account-foot-entry:hover {
+  border-color: var(--ink);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.07);
+  transform: translateY(-1px);
+}
+
+.account-foot-entry:active {
+  transform: translateY(0);
+}
+
 /* ---------- 返回顶部浮动按钮 ---------- */
 .scroll-top-btn {
   position: fixed;

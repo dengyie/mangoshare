@@ -1,6 +1,7 @@
 import React from 'react';
 import { SimCardItem as SimCardItemType } from '../../types/sim-card';
 import { getSimCardArt } from '../../utils/card-art';
+import { ItemStatusBadge } from '../account/ItemMarkControl';
 
 interface SimCardItemProps {
   card: SimCardItemType;
@@ -33,6 +34,7 @@ export const SimCardItem: React.FC<SimCardItemProps> = ({ card, onSelect }) => {
     >
       <span className="cell-img" onPointerMove={handlePointerMove}>
         <img src={cardArt} alt={`${card.name} 卡面`} loading="lazy" />
+        <ItemStatusBadge itemType="sim-card" itemId={card.id} />
       </span>
       <span className="cell-meta">
         <div className="cell-name" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
