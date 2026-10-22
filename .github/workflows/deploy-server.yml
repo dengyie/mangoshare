@@ -1,0 +1,91 @@
+name: Deploy Account Server
+
+# server/** changes = rebuild the Go account backend and restart it on
+# nl-vps via the google-vps relay (same path as deploy.yml — GitHub runners
+# have no IPv6 and the LeaseWeb IPv4 :22 endpoint is not this host's sshd).
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'server/**'
+      - '.github/workflows/deploy-server.yml'
+  workflow_dispatch:
+
+# workflow_dispatch can target any branch; only main may ever reach production.
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-account-server
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+
+      - name: Test
+        run: go test ./...
+        working-directory: server
+
+      - name: Build (linux/amd64, no cgo — modernc.org/sqlite)
+        run: CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o /tmp/mangoshare-account .
+        working-directory: server
+
+      - name: Setup SSH keys
+        run: |
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          printf '%s\n' "$RELAY_KEY" > ~/.ssh/relay_key
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/relay_key ~/.ssh/deploy_key ~/.ssh/known_hosts
+          # Same pinned-key SSH config as deploy.yml (see the notes there).
+          cat >> ~/.ssh/config << 'CFG'
+          Host relay
+            HostName 35.212.179.13
+            User ci-relay
+            IdentityFile ~/.ssh/relay_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+
+          Host nl-target
+            HostName 10.144.144.12
+            User deploy
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            ProxyJump relay
+            StrictHostKeyChecking yes
+          CFG
+          chmod 600 ~/.ssh/config
+        env:
+          RELAY_KEY: ${{ secrets.CI_RELAY_SSH_KEY }}
+          DEPLOY_KEY: ${{ secrets.NL_VPS_DEPLOY_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.CI_SSH_KNOWN_HOSTS }}
+
+      - name: Deploy (rsync binary over relay + restart service)
+        run: |
+          # /var/www/mangoshare-bin is deploy-writable and NOT the rsync
+          # --delete webroot, so the binary survives frontend deploys.
+          rsync -az -e "ssh -F $HOME/.ssh/config" /tmp/mangoshare-account nl-target:/var/www/mangoshare-bin/mangoshare-account
+          ssh -F $HOME/.ssh/config nl-target '
+            sudo -n /usr/bin/systemctl restart mangoshare-account.service
+            sudo -n /usr/bin/systemctl is-active mangoshare-account.service
+          '
+          echo "Deployed $(git rev-parse --short HEAD) at $(date -u +%FT%TZ)"
+
+      - name: Verify production
+        run: |
+          sleep 3
+          body=$(curl -sf https://share.mangoqwq.com/account-api/api/health)
+          echo "health: $body"
+          [ "$body" = '{"status":"ok"}' ] || { echo "Production health check failed"; exit 1; }
