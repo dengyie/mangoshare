@@ -3,3 +3,4 @@ dist/
 .zcode/
 *.log
 .DS_Store
+.ops-snapshots/
