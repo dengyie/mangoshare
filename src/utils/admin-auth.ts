@@ -95,14 +95,6 @@ export type AdminLoginAttempt =
   | { kind: 'session'; session: AdminSession }
   | { kind: '2fa'; flowToken: string };
 
-interface RawLoginArgs {
-  base: string;
-  path: string;
-  payload: Record<string, string>;
-  fallbackUsername: string;
-  timeoutMs: number;
-}
-
 async function postLogin(
   base: string,
   path: string,
@@ -141,14 +133,19 @@ function parseLoginData(
   }
   const data = body.data;
   // Two-factor-enabled accounts answer with a challenge instead of a token.
-  if (data.require_verification && data.flow_token) {
+  if (data.require_verification) {
+    if (!data.flow_token) {
+      throw new Error('两步验证挑战响应不完整，请稍后重试');
+    }
     const twoFAOffered = (data.methods || []).some(
       (m) => m.method === '2fa' && m.available !== false
     );
     if (twoFAOffered || (data.methods || []).length === 0) {
+      // No methods list is treated as a 2FA challenge so that MangoApi-compatible
+      // forks that omit the field still reach the code step.
       return { kind: '2fa', flowToken: data.flow_token };
     }
-    throw new Error('该账号需要额外验证，但暂无可用验证方式');
+    throw new Error('该账号使用的验证方式本站暂不支持（仅支持两步验证动态码）');
   }
   const { access_token, access_expires_at, user } = data;
   if (!access_token || !user || typeof user.role !== 'number') {
@@ -208,7 +205,7 @@ export async function completeAdminLogin(
   );
   const attempt = parseLoginData(base, body, fallbackUsername);
   if (attempt.kind !== 'session') {
-    throw new Error('验证响应缺少必要字段，请稍后重试');
+    throw new Error('两步验证响应异常，请稍后重试');
   }
   return attempt.session;
 }

@@ -147,7 +147,7 @@ export const AccountPanel: React.FC<AccountPanelProps> = ({
         {pendingFlowToken ? (
           <>
             <p className="text-xs leading-relaxed text-[var(--ink-soft)]">
-              账号 <span className="font-mono">{username || 'admin'}</span> 已开启两步验证。
+              账号 <span className="font-mono">{username}</span> 已开启两步验证。
               请输入认证器 App 生成的 6 位动态码，或使用备用恢复码完成登录。
             </p>
             <form onSubmit={handleTwoFaSubmit} className="flex flex-col gap-3">
