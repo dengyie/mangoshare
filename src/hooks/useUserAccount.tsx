@@ -143,7 +143,8 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
           if (upload.length > 0) {
             putMyItems(stored.token, upload)
               .then((authoritative) => {
-                if (!cancelled) setItems((prev) => mergeItems(prev, authoritative));
+                if (cancelled || sessionRef.current?.token !== stored.token) return;
+                setItems((prev) => mergeItems(prev, authoritative));
               })
               .catch(() => {
                 /* keep merged local state; next sync reconciles */
@@ -176,11 +177,15 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
       saveLocalItems(next);
       const current = sessionRef.current;
       if (current) {
+        const token = current.token;
         const entry = status === null ? null : next.get(itemKey(itemType, itemId));
         // Fire-and-forget single-entry push; on failure the local state
         // already reflects the change and the next full sync reconciles.
-        putMyItems(current.token, entry ? [entry] : [{ itemType, itemId, status: '', updatedAt: Date.now() }])
+        putMyItems(token, entry ? [entry] : [{ itemType, itemId, status: '', updatedAt: Date.now() }])
           .then((authoritative) => {
+            // The session may have logged out (or switched accounts) while
+            // the push was in flight — never merge into the wrong session.
+            if (sessionRef.current?.token !== token) return;
             setItems((prev) => mergeItems(prev, authoritative));
           })
           .catch(() => {
@@ -198,11 +203,14 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
       const local = loadLocalItems();
       try {
         const serverItems = await fetchMyItems(next.token);
+        // A newer login (or logout) while we were fetching wins outright.
+        if (sessionRef.current?.token !== next.token) return next.user;
         const merged = mergeItems(local, serverItems);
         setItems(merged);
         const upload = diffForUpload(merged, serverItems);
         if (upload.length > 0) {
           const authoritative = await putMyItems(next.token, upload);
+          if (sessionRef.current?.token !== next.token) return next.user;
           setItems((prev) => mergeItems(prev, authoritative));
         }
         clearLocalItems();

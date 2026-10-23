@@ -73,7 +73,10 @@ function loadManagedStationEntries(): CatalogEntry[] {
   }
 }
 
-let snapshotKey: string | null = null;
+// `undefined` marks "not built yet"; it must never compare equal to a real
+// getItem() result (null = key absent, string = present), or the first call
+// would skip the rebuild and serve an empty catalog.
+let snapshotKey: string | null | undefined = undefined;
 let snapshotCatalog: CatalogEntry[] = [];
 let snapshotIndex: Map<string, CatalogEntry> = new Map();
 

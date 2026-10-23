@@ -46,7 +46,7 @@ export const ItemMarkControl: React.FC<ItemMarkControlProps> = ({ itemType, item
       </div>
       <p className="item-mark-hint">
         {user
-          ? '标记已同步到云端，多端登录可见'
+          ? '登录状态下的标记会自动同步到云端，多端登录可见'
           : '当前以游客身份记录在本地浏览器，注册 / 登录后自动同步'}
       </p>
     </div>
