@@ -6,18 +6,6 @@
 /** Catalog sections that support the opened/wanted checklist. */
 export type MyItemType = 'u-card' | 'sim-card' | 'credit-card' | 'perk' | 'ai-station';
 
-export const MY_ITEM_TYPES: MyItemType[] = [
-  'u-card',
-  'sim-card',
-  'credit-card',
-  'perk',
-  'ai-station',
-];
-
-export function isMyItemType(v: unknown): v is MyItemType {
-  return typeof v === 'string' && (MY_ITEM_TYPES as string[]).includes(v);
-}
-
 /**
  * Per-item marking state. 'opened' = 已开通, 'wanted' = 待开通.
  */

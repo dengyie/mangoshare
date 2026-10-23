@@ -13,6 +13,17 @@ export const ACCOUNT_API_BASE = '/account-api';
 
 const TIMEOUT_MS = 10000;
 
+/** fetch with a hard timeout; callers own the error mapping. */
+async function fetchWithTimeout(path: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(`${ACCOUNT_API_BASE}${path}`, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export class AccountApiError extends Error {
   status: number;
   constructor(status: number, message: string) {
@@ -27,23 +38,18 @@ async function request<T>(
   body: unknown,
   token: string | null
 ): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   let res: Response;
   try {
-    res = await fetch(`${ACCOUNT_API_BASE}${path}`, {
+    res = await fetchWithTimeout(path, {
       method,
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: body === null ? undefined : JSON.stringify(body),
-      signal: controller.signal,
     });
   } catch {
     throw new AccountApiError(0, '网络异常，请检查网络后重试');
-  } finally {
-    clearTimeout(timer);
   }
   let data: any = null;
   try {
@@ -53,8 +59,7 @@ async function request<T>(
   }
   if (!res.ok) {
     const message =
-      (data && typeof data.error === 'string' && data.error) ||
-      (res.status === 0 ? '网络异常，请检查网络后重试' : '服务暂时不可用，请稍后重试');
+      (data && typeof data.error === 'string' && data.error) || '服务暂时不可用，请稍后重试';
     throw new AccountApiError(res.status, message);
   }
   return data as T;
@@ -122,26 +127,17 @@ export type AccountVerifyResult = 'valid' | 'invalid' | 'unreachable';
  * the local session.
  */
 export async function verifyAccountSession(token: string): Promise<AccountVerifyResult> {
+  let res: Response;
   try {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
-    let res: Response;
-    try {
-      res = await fetch(`${ACCOUNT_API_BASE}/api/me`, {
-        headers: { Authorization: `Bearer ${token}` },
-        signal: controller.signal,
-      });
-    } catch {
-      return 'unreachable';
-    } finally {
-      clearTimeout(timer);
-    }
-    if (res.status === 401 || res.status === 403) return 'invalid';
-    if (!res.ok) return 'unreachable';
-    return 'valid';
+    res = await fetchWithTimeout('/api/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    });
   } catch {
     return 'unreachable';
   }
+  if (res.status === 401 || res.status === 403) return 'invalid';
+  if (!res.ok) return 'unreachable';
+  return 'valid';
 }
 
 // ---- items --------------------------------------------------------------
@@ -161,8 +157,4 @@ export async function putMyItems(
 ): Promise<MyItemEntry[]> {
   const data = await request<{ items: MyItemEntry[] }>('PUT', '/api/my/items', { items }, token);
   return Array.isArray(data.items) ? data.items : [];
-}
-
-export function statusLabel(status: MyItemStatus): string {
-  return status === 'opened' ? '已开通' : '待开通';
 }

@@ -20,7 +20,7 @@ const OPTIONS: { value: 'opened' | 'wanted'; label: string; icon: 'check-circle'
 ];
 
 export const ItemMarkControl: React.FC<ItemMarkControlProps> = ({ itemType, itemId }) => {
-  const { getItemStatus, setItemStatus, user, syncing } = useUserAccount();
+  const { getItemStatus, setItemStatus, user } = useUserAccount();
   const status = getItemStatus(itemType, itemId);
 
   return (
@@ -46,9 +46,7 @@ export const ItemMarkControl: React.FC<ItemMarkControlProps> = ({ itemType, item
       </div>
       <p className="item-mark-hint">
         {user
-          ? syncing
-            ? '正在同步到云端…'
-            : '标记已同步到云端，多端登录可见'
+          ? '标记已同步到云端，多端登录可见'
           : '当前以游客身份记录在本地浏览器，注册 / 登录后自动同步'}
       </p>
     </div>

@@ -9,6 +9,10 @@
  *   to localStorage; logged-in users get server sync with last-writer-wins
  *   merge on login plus per-change pushes. A failed push leaves the local
  *   entry in place — the next successful sync reconciles it.
+ *
+ * Server responses are always merged into the latest local state, never
+ * substituted for it: concurrent pushes can resolve out of order, and a
+ * wholesale replace would visibly drop marks made after the request left.
  */
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -27,6 +31,7 @@ import {
 import {
   clearLocalItems,
   diffForUpload,
+  itemKey,
   loadLocalItems,
   mergeItems,
   saveLocalItems,
@@ -71,8 +76,6 @@ export interface UserAccountState {
   sessionReady: boolean;
   items: MyItemsMap;
   counts: { opened: number; wanted: number };
-  /** Server sync in flight (used to disable double submits). */
-  syncing: boolean;
   getItemStatus: (itemType: MyItemType, itemId: string) => MyItemStatus | null;
   /** Mark/unmark an item; guests stay local, users sync to the server. */
   setItemStatus: (itemType: MyItemType, itemId: string, status: MyItemStatus | null) => void;
@@ -104,9 +107,10 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<AccountSession | null>(() => loadStoredSession());
   const [sessionReady, setSessionReady] = useState(false);
   const [items, setItems] = useState<MyItemsMap>(() => loadLocalItems());
-  const [syncing, setSyncing] = useState(false);
   const sessionRef = useRef(session);
   sessionRef.current = session;
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
 
   // Startup verification: adopt the server checklist when a stored session
   // is still valid; drop the session only when the server rejects it.
@@ -123,28 +127,28 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
       if (result === 'invalid') {
         setSession(null);
         saveStoredSession(null);
+        // Mirror logout: an expired session must not leave the account's
+        // checklist behind as guest marks for the next browser user.
+        setItems(new Map());
+        clearLocalItems();
       } else if (result === 'valid') {
         try {
           const serverItems = await fetchMyItems(stored.token);
           if (cancelled) return;
-          setItems((prev) => {
-            const merged = mergeItems(prev, serverItems);
-            // Guest marks made before this visit win over the server and
-            // are pushed so every device converges.
-            const upload = diffForUpload(merged, serverItems);
-            if (upload.length > 0) {
-              putMyItems(stored.token, upload)
-                .then((authoritative) => {
-                  if (!cancelled) {
-                    setItems(mergeItems(new Map(), authoritative));
-                  }
-                })
-                .catch(() => {
-                  /* keep merged local state; next sync reconciles */
-                });
-            }
-            return merged;
-          });
+          const merged = mergeItems(itemsRef.current, serverItems);
+          setItems(merged);
+          // Guest marks made before this visit win over the server and are
+          // pushed so every device converges.
+          const upload = diffForUpload(merged, serverItems);
+          if (upload.length > 0) {
+            putMyItems(stored.token, upload)
+              .then((authoritative) => {
+                if (!cancelled) setItems((prev) => mergeItems(prev, authoritative));
+              })
+              .catch(() => {
+                /* keep merged local state; next sync reconciles */
+              });
+          }
         } catch {
           /* unreachable — keep local state */
         }
@@ -162,39 +166,27 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
     sessionRef.current = next;
   }, []);
 
-  /** Push the full current map to the server and adopt the response. */
-  const syncAll = useCallback(async (map: MyItemsMap) => {
-    const current = sessionRef.current;
-    if (!current) return;
-    setSyncing(true);
-    try {
-      const authoritative = await putMyItems(current.token, Array.from(map.values()));
-      setItems(mergeItems(new Map(), authoritative));
-    } finally {
-      setSyncing(false);
-    }
-  }, []);
-
   const setItemStatus = useCallback(
     (itemType: MyItemType, itemId: string, status: MyItemStatus | null) => {
-      setItems((prev) => {
-        const next = upsertItem(prev, itemType, itemId, status);
-        saveLocalItems(next);
-        const current = sessionRef.current;
-        if (current) {
-          const entry = status === null ? null : next.get(`${itemType}:${itemId}`);
-          // Fire-and-forget single-entry push; on failure the local state
-          // already reflects the change and the next full sync reconciles.
-          putMyItems(current.token, entry ? [entry] : [{ itemType, itemId, status: '', updatedAt: Date.now() }])
-            .then((authoritative) => {
-              setItems(mergeItems(new Map(), authoritative));
-            })
-            .catch(() => {
-              /* offline — reconciled on next sync */
-            });
-        }
-        return next;
-      });
+      // All state work happens in the event handler (run once), never in a
+      // setState updater — updaters must stay pure and can be re-invoked.
+      const next = upsertItem(itemsRef.current, itemType, itemId, status);
+      itemsRef.current = next;
+      setItems(next);
+      saveLocalItems(next);
+      const current = sessionRef.current;
+      if (current) {
+        const entry = status === null ? null : next.get(itemKey(itemType, itemId));
+        // Fire-and-forget single-entry push; on failure the local state
+        // already reflects the change and the next full sync reconciles.
+        putMyItems(current.token, entry ? [entry] : [{ itemType, itemId, status: '', updatedAt: Date.now() }])
+          .then((authoritative) => {
+            setItems((prev) => mergeItems(prev, authoritative));
+          })
+          .catch(() => {
+            /* offline — reconciled on next sync */
+          });
+      }
     },
     []
   );
@@ -211,7 +203,7 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
         const upload = diffForUpload(merged, serverItems);
         if (upload.length > 0) {
           const authoritative = await putMyItems(next.token, upload);
-          setItems(mergeItems(new Map(), authoritative));
+          setItems((prev) => mergeItems(prev, authoritative));
         }
         clearLocalItems();
       } catch (err) {
@@ -279,7 +271,6 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
       sessionReady,
       items,
       counts,
-      syncing,
       getItemStatus,
       setItemStatus,
       login,
@@ -288,7 +279,7 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
       logout,
       sendCode,
     }),
-    [session, sessionReady, items, counts, syncing, getItemStatus, setItemStatus, login, register, resetPasswordAndLogin, logout, sendCode]
+    [session, sessionReady, items, counts, getItemStatus, setItemStatus, login, register, resetPasswordAndLogin, logout, sendCode]
   );
 
   return <UserAccountContext.Provider value={value}>{children}</UserAccountContext.Provider>;

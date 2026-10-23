@@ -68,7 +68,6 @@ export const AccountPanel: React.FC<AccountPanelProps> = ({
           user={account.user}
           items={Array.from(account.items.values())}
           counts={account.counts}
-          syncing={account.syncing}
           onUnmark={account.setItemStatus}
           onLogout={() => void account.logout()}
         />
@@ -400,10 +399,9 @@ const UserDashboard: React.FC<{
   user: { email: string; displayName: string; createdAt: number };
   items: MyItemEntry[];
   counts: { opened: number; wanted: number };
-  syncing: boolean;
   onUnmark: (itemType: MyItemType, itemId: string, status: null) => void;
   onLogout: () => void;
-}> = ({ user, items, counts, syncing, onUnmark, onLogout }) => {
+}> = ({ user, items, counts, onUnmark, onLogout }) => {
   const [statusFilter, setStatusFilter] = useState<'opened' | 'wanted'>('opened');
   const [typeFilter, setTypeFilter] = useState<'all' | 'u-card' | 'sim-card' | 'credit-card' | 'perk' | 'ai-station'>('all');
 
@@ -435,9 +433,6 @@ const UserDashboard: React.FC<{
             <h2 className="text-sm font-semibold tracking-wide text-[var(--ink)]">
               {user.displayName || user.email}
             </h2>
-            {syncing && (
-              <span className="text-[10px] text-[var(--ink-soft)]">同步中…</span>
-            )}
           </div>
           <p className="mt-1 text-xs text-[var(--ink-soft)]">
             已开通 {counts.opened} 项 · 待开通 {counts.wanted} 项。点击列表条目可查看详情弹窗。

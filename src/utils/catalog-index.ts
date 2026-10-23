@@ -1,7 +1,7 @@
 /**
  * Catalog anchors for the "my items" checklist: turns stored
  * (itemType, itemId) pairs back into displayable catalog entries and
- * deep-link hashes. All data is the static build-time catalog.
+ * deep-link hashes. Static catalog plus the user's custom AI stations.
  */
 import { U_CARDS } from '../data/u-cards';
 import { SIM_CARDS } from '../data/sim-cards';
@@ -47,15 +47,15 @@ function stationEntry(s: AiStationItem): CatalogEntry {
   return { itemType: 'ai-station', anchor: s.id, tab: 'ai-hub', name: s.name, categoryLabel: 'AI 公益站' };
 }
 
-const CATALOG: CatalogEntry[] = [
+// 预设站 + localStorage 自定义站参与勾选；upstream-* 动态卡 id 不稳定，
+// 不进入目录（自然无法被标记）。自定义站在会话中途可能增删，因此目录按
+// localStorage 快照缓存：原始串变了才重建，避免每次查询重复解析。
+const STATIC_CATALOG: CatalogEntry[] = [
   ...U_CARDS.map(uCardEntry),
   ...SIM_CARDS.map(simEntry),
   ...CREDIT_CARDS.map(creditEntry),
   ...PERKS.map(perkEntry),
-  // 预设站 + localStorage 自定义站参与勾选；upstream-* 动态卡 id 不稳定，
-  // 不进入目录（自然无法被标记）。
   ...AI_STATIONS.map(stationEntry),
-  ...loadManagedStationEntries(),
 ];
 
 function loadManagedStationEntries(): CatalogEntry[] {
@@ -73,12 +73,25 @@ function loadManagedStationEntries(): CatalogEntry[] {
   }
 }
 
-const CATALOG_INDEX: Map<string, CatalogEntry> = new Map(
-  CATALOG.map((entry) => [`${entry.itemType}:${entry.anchor}`, entry])
-);
+let snapshotKey: string | null = null;
+let snapshotCatalog: CatalogEntry[] = [];
+let snapshotIndex: Map<string, CatalogEntry> = new Map();
+
+function getCatalog(): { entries: CatalogEntry[]; index: Map<string, CatalogEntry> } {
+  const raw =
+    typeof window === 'undefined' ? null : window.localStorage.getItem('mangoshare_custom_ai_stations_v2');
+  if (snapshotKey !== raw) {
+    snapshotKey = raw;
+    snapshotCatalog = [...STATIC_CATALOG, ...loadManagedStationEntries()];
+    snapshotIndex = new Map(
+      snapshotCatalog.map((entry) => [`${entry.itemType}:${entry.anchor}`, entry])
+    );
+  }
+  return { entries: snapshotCatalog, index: snapshotIndex };
+}
 
 export function findCatalogEntry(itemType: MyItemType, itemId: string): CatalogEntry | null {
-  return CATALOG_INDEX.get(`${itemType}:${itemId}`) ?? null;
+  return getCatalog().index.get(`${itemType}:${itemId}`) ?? null;
 }
 
 export function deepLinkFor(entry: CatalogEntry): string {
@@ -88,6 +101,6 @@ export function deepLinkFor(entry: CatalogEntry): string {
 export const CATEGORY_ORDER: MyItemType[] = ['u-card', 'sim-card', 'credit-card', 'perk', 'ai-station'];
 
 export function categoryLabelOf(itemType: MyItemType): string {
-  const entry = CATALOG.find((e) => e.itemType === itemType);
+  const entry = getCatalog().entries.find((e) => e.itemType === itemType);
   return entry?.categoryLabel ?? itemType;
 }
