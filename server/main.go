@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -27,11 +28,22 @@ func main() {
 	defer st.close()
 
 	var mailer Mailer
-	if cfg.ResendAPIKey == "" {
-		logger.Print("WARNING: RESEND_API_KEY not set — verification codes go to the log only (dev mode)")
-		mailer = devMailer{logger: logger}
-	} else {
+	switch {
+	case cfg.OneMailAPI != "" && cfg.OneMailToken != "":
+		// Preferred: send through the one-mail Worker (per-domain Resend
+		// dispatch, sendbox audit trail). The From address comes from the
+		// address JWT, so MailFrom only carries the display name here.
+		fromName := cfg.MailFrom
+		if i := strings.LastIndex(fromName, "<"); i > 0 {
+			fromName = strings.TrimSpace(fromName[:i])
+		}
+		fromName = strings.Trim(fromName, `"`)
+		mailer = newOneMailMailer(cfg.OneMailAPI, cfg.OneMailToken, fromName)
+	case cfg.ResendAPIKey != "":
 		mailer = newResendMailer(cfg.ResendAPIKey, cfg.MailFrom)
+	default:
+		logger.Print("WARNING: neither ONE_MAIL_* nor RESEND_API_KEY set — verification codes go to the log only (dev mode)")
+		mailer = devMailer{logger: logger}
 	}
 
 	srv := NewServer(cfg, st, mailer, logger)

@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -25,8 +26,8 @@ type mailMsg struct {
 
 // captureMailer records verification codes instead of sending mail.
 type captureMailer struct {
-	mu    sync.Mutex
-	sent  []mailMsg
+	mu   sync.Mutex
+	sent []mailMsg
 }
 
 func (m *captureMailer) SendCode(_ context.Context, to, code, purpose string) error {
@@ -381,5 +382,49 @@ func TestPasswordValidation(t *testing.T) {
 	})
 	if status != http.StatusOK {
 		t.Fatalf("register with same code status = %d %v", status, out)
+	}
+}
+
+func TestOneMailMailer(t *testing.T) {
+	var gotPath string
+	var gotBody map[string]any
+	var gotStatus int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		body, _ := io.ReadAll(r.Body)
+		_ = json.Unmarshal(body, &gotBody)
+		w.WriteHeader(gotStatus)
+		if gotStatus == 200 {
+			_, _ = w.Write([]byte(`{"status":"ok"}`))
+		} else {
+			_, _ = w.Write([]byte(`send blocked`))
+		}
+	}))
+	defer srv.Close()
+
+	m := newOneMailMailer(srv.URL, "jwt-secret", "MangoShare")
+
+	// success path posts the full one-mail payload
+	gotStatus = 200
+	if err := m.SendCode(context.Background(), "user@example.com", "123456", purposeRegister); err != nil {
+		t.Fatalf("SendCode ok: %v", err)
+	}
+	if gotPath != "/external/api/send_mail" {
+		t.Fatalf("path = %s", gotPath)
+	}
+	if gotBody["token"] != "jwt-secret" || gotBody["to_mail"] != "user@example.com" ||
+		gotBody["from_name"] != "MangoShare" || gotBody["is_html"] != true ||
+		gotBody["subject"] != mailSubject(purposeRegister) {
+		t.Fatalf("unexpected body: %v", gotBody)
+	}
+	if content, _ := gotBody["content"].(string); !strings.Contains(content, "123456") {
+		t.Fatalf("content missing code")
+	}
+
+	// HTTP error surfaces status and body snippet
+	gotStatus = 403
+	err := m.SendCode(context.Background(), "user@example.com", "123456", purposeRegister)
+	if err == nil || !strings.Contains(err.Error(), "403") || !strings.Contains(err.Error(), "send blocked") {
+		t.Fatalf("error = %v", err)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"time"
@@ -91,8 +92,62 @@ func (m *resendMailer) SendCode(ctx context.Context, to, code, purpose string) e
 	return nil
 }
 
+// oneMailMailer sends through the one-mail Worker (mail-api.mangoqwq.com,
+// POST /external/api/send_mail). The From address is bound to the address
+// JWT; one-mail resolves the outbound channel per domain (otp.mangoqwq.com
+// dispatches via its own Resend token) and records the send in its sendbox.
+type oneMailMailer struct {
+	apiBase  string // e.g. https://mail-api.mangoqwq.com
+	token    string // address JWT, secret
+	fromName string // display name, e.g. "MangoShare"
+	hc       *http.Client
+}
+
+func newOneMailMailer(apiBase, token, fromName string) *oneMailMailer {
+	return &oneMailMailer{
+		apiBase:  apiBase,
+		token:    token,
+		fromName: fromName,
+		hc:       &http.Client{Timeout: 15 * time.Second},
+	}
+}
+
+// String matches devMailer's logging hook used at startup.
+func (*oneMailMailer) String() string { return "one-mail" }
+
+func (m *oneMailMailer) SendCode(ctx context.Context, to, code, purpose string) error {
+	body := map[string]any{
+		"token":     m.token,
+		"from_name": m.fromName,
+		"to_mail":   to,
+		"to_name":   "",
+		"subject":   mailSubject(purpose),
+		"content":   mailHTML(purpose, code),
+		"is_html":   true,
+	}
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, m.apiBase+"/external/api/send_mail", bytes.NewReader(buf))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := m.hc.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 256))
+		return fmt.Errorf("one-mail send status %d: %s", resp.StatusCode, string(snippet))
+	}
+	return nil
+}
+
 // devMailer logs codes instead of sending — for local dev without a
-// Resend key. Never used in production (RESEND_API_KEY set).
+// one-mail token or Resend key. Never used in production.
 type devMailer struct{ logger *log.Logger }
 
 func (devMailer) String() string { return "dev" }
