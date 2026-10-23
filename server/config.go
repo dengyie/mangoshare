@@ -14,6 +14,7 @@ type Config struct {
 	ResendAPIKey string // direct-Resend fallback; empty unless ONE_MAIL_* unset
 	MailFrom     string // Resend "from" header / one-mail from_name
 	SiteURL      string // public site origin, used in mail copy
+	AdminEmail   string // local account that unlocks the admin console UI; empty = nobody
 	OneMailAPI   string // one-mail Worker base URL, e.g. https://mail-api.mangoqwq.com
 	OneMailToken string // one-mail address JWT (from bound to this address)
 	TokenTTL     time.Duration
@@ -41,6 +42,7 @@ func LoadConfig() Config {
 		ResendAPIKey: os.Getenv("RESEND_API_KEY"),
 		MailFrom:     env("MAIL_FROM", "MangoShare <noreply@otp.mangoqwq.com>"),
 		SiteURL:      strings.TrimRight(env("SITE_URL", "https://share.mangoqwq.com"), "/"),
+		AdminEmail:   strings.ToLower(strings.TrimSpace(os.Getenv("ADMIN_EMAIL"))),
 		OneMailAPI:   strings.TrimRight(env("ONE_MAIL_API_BASE", ""), "/"),
 		OneMailToken: os.Getenv("ONE_MAIL_SEND_TOKEN"),
 		TokenTTL:     dur("TOKEN_TTL", 30*24*time.Hour),

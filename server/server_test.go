@@ -247,6 +247,65 @@ func TestWrongCodeAndEnumerationSafety(t *testing.T) {
 	}
 }
 
+// The admin role is derived from cfg.AdminEmail at response time — no DB
+// column, no way to register into it by racing a config change.
+func TestRoleDerivedFromAdminEmail(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer st.close()
+	mailer := &captureMailer{}
+	cfg := LoadConfig()
+	cfg.AdminEmail = "boss@example.com"
+	srv := NewServer(cfg, st, mailer, log.New(io.Discard, "", 0))
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	adminToken := registerUser(t, ts, mailer, "boss@example.com", "password123")
+	userToken := registerUser(t, ts, mailer, "user@example.com", "password123")
+
+	status, out := doJSON(t, ts, "GET", "/api/me", adminToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("admin me status = %d", status)
+	}
+	if u := out["user"].(map[string]any); u["role"] != "admin" {
+		t.Fatalf("admin role = %v, want admin", u["role"])
+	}
+
+	status, out = doJSON(t, ts, "GET", "/api/me", userToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("user me status = %d", status)
+	}
+	if u := out["user"].(map[string]any); u["role"] != "user" {
+		t.Fatalf("user role = %v, want user", u["role"])
+	}
+
+	// login must report the role too (not just /api/me)
+	status, out = doJSON(t, ts, "POST", "/api/auth/login", "", map[string]string{
+		"email": "BOSS@example.com", "password": "password123",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("admin login status = %d", status)
+	}
+	if u := out["user"].(map[string]any); u["role"] != "admin" {
+		t.Fatalf("login role = %v, want admin (case-insensitive match)", u["role"])
+	}
+
+	// an empty AdminEmail means nobody is admin
+	emptyCfg := LoadConfig()
+	srv2 := NewServer(emptyCfg, st, mailer, log.New(io.Discard, "", 0))
+	ts2 := httptest.NewServer(srv2.Handler())
+	t.Cleanup(ts2.Close)
+	status, out = doJSON(t, ts2, "GET", "/api/me", adminToken, nil)
+	if status != http.StatusOK {
+		t.Fatalf("no-admin-config me status = %d", status)
+	}
+	if u := out["user"].(map[string]any); u["role"] != "user" {
+		t.Fatalf("role with empty AdminEmail = %v, want user", u["role"])
+	}
+}
+
 func TestLoginWrongPasswordAndRateLimit(t *testing.T) {
 	ts, mailer := newTestServer(t)
 	email := "login@example.com"

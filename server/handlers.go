@@ -103,10 +103,28 @@ type publicUser struct {
 	Email       string `json:"email"`
 	DisplayName string `json:"displayName"`
 	CreatedAt   int64  `json:"createdAt"`
+	Role        string `json:"role"`
 }
 
-func toPublicUser(u *user) publicUser {
-	return publicUser{ID: u.ID, Email: u.Email, DisplayName: u.DisplayName, CreatedAt: u.CreatedAt}
+// roleOf derives the UI role from the configured admin email. It only gates
+// the admin-console entry in the frontend — actual admin powers stay with
+// the API station's own credential store, which the console authenticates
+// against separately.
+func (s *Server) roleOf(email string) string {
+	if s.cfg.AdminEmail != "" && strings.EqualFold(email, s.cfg.AdminEmail) {
+		return "admin"
+	}
+	return "user"
+}
+
+func (s *Server) toPublicUser(u *user) publicUser {
+	return publicUser{
+		ID:          u.ID,
+		Email:       u.Email,
+		DisplayName: u.DisplayName,
+		CreatedAt:   u.CreatedAt,
+		Role:        s.roleOf(u.Email),
+	}
 }
 
 func bearerToken(r *http.Request) string {
@@ -256,7 +274,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Printf("registered user id=%d email=%s ip=%s", u.ID, email, clientIP(r))
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": toPublicUser(u)})
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": s.toPublicUser(u)})
 }
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
@@ -299,7 +317,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": toPublicUser(u)})
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": s.toPublicUser(u)})
 }
 
 // failLogin burns a bcrypt comparison for non-existent accounts so timing
@@ -378,7 +396,7 @@ func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.logger.Printf("password reset user id=%d ip=%s", u.ID, clientIP(r))
-	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": toPublicUser(u)})
+	writeJSON(w, http.StatusOK, map[string]any{"token": token, "user": s.toPublicUser(u)})
 }
 
 // ---- session -----------------------------------------------------------
@@ -396,7 +414,7 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusUnauthorized, "未登录或登录已过期")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"user": toPublicUser(u)})
+	writeJSON(w, http.StatusOK, map[string]any{"user": s.toPublicUser(u)})
 }
 
 // ---- items -------------------------------------------------------------
