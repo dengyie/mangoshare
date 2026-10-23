@@ -70,7 +70,7 @@ export const AiStationModal: React.FC<AiStationModalProps> = ({ station, onClose
     if (success) flash(setShareCopied);
   };
 
-  const cardArt = getAiStationArt(station.id, station.name, station.category, station.models);
+  const cardArt = getAiStationArt(station.id, station.name, station.category, station.models, station.portalUrl);
 
   const cleanBaseUrl = station.apiBaseUrl
     .trim()

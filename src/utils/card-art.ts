@@ -144,47 +144,104 @@ export function getSimCardArt(id: string, name: string, countryCode: string, cou
   return svgToDataUri(svg);
 }
 
-export function getAiStationArt(id: string, name: string, category: string, models: string[]): string {
-  const modelText = models.slice(0, 3).join(' · ');
-  const safeId = escapeXml(id);
+// FNV-1a over the card id so each station gets a stable hue pair without
+// hand-maintaining a per-station color table.
+function hashHuePair(id: string): [number, number] {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  const h1 = (h >>> 0) % 360;
+  const h2 = (h1 + 40 + ((h >>> 8) % 80)) % 360;
+  return [h1, h2];
+}
+
+// Single source of truth for a station's display host: "https://a.b/c" ->
+// "a.b". Unparseable or missing URLs fall back to the station name so a card
+// never renders an empty identity line.
+export function getStationHost(station: { name: string; portalUrl?: string }): string {
+  const url = station.portalUrl;
+  if (url) {
+    try {
+      const host = new URL(url).host;
+      if (host) return host;
+    } catch {
+      // fall through to the name
+    }
+  }
+  return station.name;
+}
+
+export type AiStationCardHealth = 'online' | 'degraded' | 'unknown';
+
+export function getAiStationArt(
+  id: string,
+  name: string,
+  category: string,
+  models: string[],
+  portalUrl?: string,
+  health: AiStationCardHealth = 'unknown'
+): string {
+  const host = getStationHost({ name, portalUrl });
+  const [h1, h2] = hashHuePair(id || host);
+  const safeId = escapeXml((id || 'station').replace(/[^a-zA-Z0-9_-]/g, '-'));
   const safeCategory = escapeXml(category);
+  const safeHost = escapeXml(host);
   const safeName = escapeXml(name);
-  const safeModelText = escapeXml(modelText);
+  const safeModels = escapeXml(models.slice(0, 3).join(' · '));
+
+  // ~7px per glyph at 22px monospace: shrink the host until it fits the card.
+  const hostFontSize = host.length > 40 ? 14 : host.length > 30 ? 17 : 22;
+
+  // The badge must reflect the real probe result: painting "ONLINE" on a card
+  // whose detail row says "测速超时" contradicts the one signal users pick
+  // stations by. 'unknown' renders no badge at all (e.g. the detail modal,
+  // which runs no probe of its own).
+  const healthBadge =
+    health === 'online'
+      ? `<text x="396" y="226" text-anchor="end" fill="#34d399" font-family="Inter, sans-serif" font-weight="600" font-size="12">● ONLINE</text>`
+      : health === 'degraded'
+      ? `<text x="396" y="226" text-anchor="end" fill="#f97316" font-family="Inter, sans-serif" font-weight="600" font-size="12">● UNREACHABLE</text>`
+      : '';
 
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 428 270" width="428" height="270">
     <defs>
-      <linearGradient id="ai_g_${safeId}" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stop-color="#141917" />
-        <stop offset="100%" stop-color="#090c0a" />
+      <linearGradient id="ai_bg_${safeId}" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stop-color="hsl(${h1}, 48%, 15%)" />
+        <stop offset="100%" stop-color="hsl(${h2}, 55%, 7%)" />
       </linearGradient>
-      <!-- Dot grid -->
-      <pattern id="dotPattern" width="12" height="12" patternUnits="userSpaceOnUse">
-        <circle cx="2" cy="2" r="1" fill="rgba(255,255,255,0.06)" />
+      <linearGradient id="ai_sheen_${safeId}" x1="0%" y1="0%" x2="100%" y2="0%">
+        <stop offset="0%" stop-color="rgba(255,255,255,0.03)" />
+        <stop offset="50%" stop-color="rgba(255,255,255,0.11)" />
+        <stop offset="100%" stop-color="rgba(255,255,255,0.03)" />
+      </linearGradient>
+      <pattern id="ai_dots_${safeId}" width="12" height="12" patternUnits="userSpaceOnUse">
+        <circle cx="2" cy="2" r="1" fill="rgba(255,255,255,0.055)" />
       </pattern>
     </defs>
 
-    <rect width="428" height="270" rx="16" fill="url(#ai_g_${safeId})" />
-    <rect width="428" height="270" rx="16" fill="url(#dotPattern)" />
-    <rect x="1" y="1" width="426" height="268" rx="15" fill="none" stroke="rgba(255,255,255,0.12)" stroke-width="1.2" />
+    <rect width="428" height="270" rx="16" fill="url(#ai_bg_${safeId})" />
+    <rect width="428" height="270" rx="16" fill="url(#ai_dots_${safeId})" />
+    <rect width="428" height="270" rx="16" fill="url(#ai_sheen_${safeId})" />
+    <rect x="1" y="1" width="426" height="268" rx="15" fill="none" stroke="rgba(255,255,255,0.14)" stroke-width="1.2" />
 
-    <!-- Station Badge -->
-    <rect x="32" y="28" width="80" height="24" rx="12" fill="rgba(16,185,129,0.15)" stroke="rgba(16,185,129,0.4)" stroke-width="1" />
-    <circle cx="44" cy="40" r="3.5" fill="#10b981" />
-    <text x="54" y="44" fill="#34d399" font-family="Inter, sans-serif" font-size="11" font-weight="600">${safeCategory}</text>
+    <!-- Category badge -->
+    <rect x="32" y="28" width="86" height="24" rx="12" fill="rgba(255,255,255,0.07)" stroke="rgba(255,255,255,0.18)" stroke-width="1" />
+    <circle cx="45" cy="40" r="3.5" fill="#34d399" />
+    <text x="56" y="44" fill="rgba(255,255,255,0.85)" font-family="Inter, sans-serif" font-size="11" font-weight="600">${safeCategory}</text>
+    <text x="396" y="45" text-anchor="end" fill="rgba(255,255,255,0.4)" font-family="Inter, sans-serif" font-weight="700" font-size="12" letter-spacing="1.5">AI NODE</text>
 
-    <!-- Name -->
-    <text x="32" y="90" fill="#f4f4f5" font-family="Inter, -apple-system, sans-serif" font-size="20" font-weight="700" letter-spacing="-0.3">${safeName}</text>
+    <!-- Host as the card face name -->
+    <text x="32" y="118" fill="#f4f4f5" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="${hostFontSize}" font-weight="700" letter-spacing="0.2">${safeHost}</text>
+    <text x="32" y="146" fill="rgba(255,255,255,0.55)" font-family="Inter, -apple-system, sans-serif" font-size="13" font-weight="500">${safeName}</text>
 
-    <!-- AI Network Wire / Waves -->
-    <path d="M32 135 C100 120, 140 150, 200 135 S320 120, 396 140" fill="none" stroke="rgba(52,211,153,0.3)" stroke-width="1.5" stroke-dasharray="4 3" />
-    <path d="M32 150 C90 160, 160 135, 230 150 S340 165, 396 145" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="1.2" />
+    <!-- Signal waves -->
+    <path d="M32 185 C100 170, 150 196, 220 181 S330 168, 396 186" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="1.5" stroke-dasharray="4 3" />
 
-    <!-- Model tags -->
-    <text x="32" y="196" fill="#a1a1aa" font-family="Inter, monospace" font-size="12">${safeModelText}</text>
-    <text x="32" y="222" fill="#71717a" font-family="Inter, sans-serif" font-size="11">OpenAI API Compatible Endpoint</text>
-
-    <!-- Live indicator -->
-    <text x="396" y="234" text-anchor="end" fill="#10b981" font-family="Inter, sans-serif" font-weight="600" font-size="12">● PING ACTIVE</text>
+    <!-- Footer -->
+    <text x="32" y="226" fill="rgba(255,255,255,0.6)" font-family="ui-monospace, monospace" font-size="12">${safeModels}</text>
+    ${healthBadge}
   </svg>`;
 
   return svgToDataUri(svg);

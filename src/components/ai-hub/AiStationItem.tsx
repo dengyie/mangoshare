@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { AiStationItem as AiStationItemType } from '../../types/ai-station';
-import { getAiStationArt } from '../../utils/card-art';
+import { getAiStationArt, getStationHost, AiStationCardHealth } from '../../utils/card-art';
 import { ItemStatusBadge } from '../account/ItemMarkControl';
 
 interface AiStationItemProps {
@@ -8,7 +8,7 @@ interface AiStationItemProps {
   onSelect: (station: AiStationItemType) => void;
 }
 
-export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect }) => {
+const AiStationItemInner: React.FC<AiStationItemProps> = ({ station, onSelect }) => {
   // Cards carrying a backend-measured latency (fed by GET /api/public_stations)
   // skip the client probe entirely: the backend already tests the upstream, and
   // fanning out a no-cors fetch per card on every page load is wasted traffic.
@@ -54,7 +54,7 @@ export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect 
       controller.abort();
       clearTimeout(timeoutId);
     };
-  }, [station.portalUrl, station.name, backendLatency]);
+  }, [station.portalUrl, backendLatency]);
 
   const handlePointerMove = (e: React.PointerEvent<HTMLSpanElement>) => {
     const r = e.currentTarget.getBoundingClientRect();
@@ -62,7 +62,24 @@ export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect 
     e.currentTarget.style.setProperty('--gy', `${((e.clientY - r.top) / r.height) * 100}%`);
   };
 
-  const cardArt = getAiStationArt(station.id, station.name, station.category, station.models);
+  // The card face and the name row share one status derivation so the SVG
+  // badge can never disagree with the textual probe result beneath it.
+  // no-cors probes resolve even for unreachable hosts (opaque responses still
+  // "succeed"), so a resolved-but-slow probe is NOT proof of health: only an
+  // actual latency figure earns ONLINE, and once the probe settles without
+  // one the badge must flip to UNREACHABLE instead of staying green forever.
+  const cardHealth: AiStationCardHealth =
+    backendLatency !== null
+      ? 'online'
+      : probeStatus === 'probing'
+      ? 'unknown'
+      : latency !== null && latency < 450
+      ? 'online'
+      : 'degraded';
+
+  const cardArt = getAiStationArt(station.id, station.name, station.category, station.models, station.portalUrl, cardHealth);
+
+  const hostLabel = getStationHost(station);
 
   const statusText = (() => {
     if (backendLatency !== null) {
@@ -112,7 +129,7 @@ export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect 
       </span>
       <span className="cell-meta">
         <div className="cell-name">
-          <span>{station.name}</span>
+          <span style={{ fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', fontSize: '0.9rem' }}>{hostLabel}</span>
         </div>
         <div className="cell-sub" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
@@ -128,3 +145,9 @@ export const AiStationItem: React.FC<AiStationItemProps> = ({ station, onSelect 
     </div>
   );
 };
+
+// Memo boundary: the grid renders ~170 cards, and every probe resolution or
+// search keystroke would otherwise re-render (and re-generate the base64 SVG
+// card art of) every surviving card. Props are the station object (stable
+// reference from the grid's useMemo) plus the select callback.
+export const AiStationItem = React.memo(AiStationItemInner);
