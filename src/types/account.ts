@@ -19,11 +19,15 @@ export interface MyItemEntry {
   updatedAt: number;
 }
 
+/** UI role derived by the backend from the configured admin email. */
+export type AccountRole = 'user' | 'admin';
+
 export interface AccountUser {
   id: number;
   email: string;
   displayName: string;
   createdAt: number;
+  role: AccountRole;
 }
 
 export interface AccountSession {

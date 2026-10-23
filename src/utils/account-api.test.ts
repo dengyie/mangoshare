@@ -16,7 +16,7 @@ import {
 } from './account-api';
 
 const TOKEN = 'tok-1';
-const USER = { id: 1, email: 'a@b.c', displayName: 'A', createdAt: '2026-01-01T00:00:00Z' };
+const USER = { id: 1, email: 'a@b.c', displayName: 'A', createdAt: 1735689600, role: 'user' };
 
 function jsonResponse(payload: unknown, status = 200): Response {
   return {
@@ -47,6 +47,22 @@ describe('auth endpoints', () => {
 
     const session = await registerAccount('a@b.c', '123456', 'password123', 'A');
     expect(session).toEqual({ token: TOKEN, user: USER });
+  });
+
+  it('auth responses normalize a missing/garbage role to user', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ token: TOKEN, user: { ...USER, role: undefined } }))
+    );
+    let session = await registerAccount('a@b.c', '123456', 'password123', 'A');
+    expect(session.user.role).toBe('user');
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ token: TOKEN, user: { ...USER, role: 'admin' } }))
+    );
+    session = await loginAccount('a@b.c', 'password123');
+    expect(session.user.role).toBe('admin');
   });
 
   it('loginAccount returns the session', async () => {
@@ -101,18 +117,34 @@ describe('error mapping', () => {
 describe('verifyAccountSession', () => {
   it.each([401, 403])('reports invalid on %i', async (status) => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, status)));
-    expect(await verifyAccountSession(TOKEN)).toBe('invalid');
+    expect(await verifyAccountSession(TOKEN)).toEqual({ result: 'invalid', user: null });
   });
 
-  it('reports unreachable on 5xx and network errors, valid on 200', async () => {
+  it('reports unreachable on 5xx and network errors', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, 500)));
-    expect(await verifyAccountSession(TOKEN)).toBe('unreachable');
+    expect(await verifyAccountSession(TOKEN)).toEqual({ result: 'unreachable', user: null });
 
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new TypeError('offline')));
-    expect(await verifyAccountSession(TOKEN)).toBe('unreachable');
+    expect(await verifyAccountSession(TOKEN)).toEqual({ result: 'unreachable', user: null });
+  });
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({}, 200)));
-    expect(await verifyAccountSession(TOKEN)).toBe('valid');
+  it('returns the refreshed profile on success, normalizing the role', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue(jsonResponse({ user: { ...USER, role: 'admin' } }))
+    );
+    expect(await verifyAccountSession(TOKEN)).toEqual({ result: 'valid', user: { ...USER, role: 'admin' } });
+
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ user: USER })));
+    expect(await verifyAccountSession(TOKEN)).toEqual({ result: 'valid', user: USER });
+
+    // non-JSON 200 body still counts as valid, without a profile
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: () => Promise.reject(new SyntaxError('not json')),
+    } as unknown as Response));
+    expect(await verifyAccountSession(TOKEN)).toEqual({ result: 'valid', user: null });
   });
 });
 

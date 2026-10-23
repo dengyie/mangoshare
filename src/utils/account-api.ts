@@ -32,6 +32,15 @@ export class AccountApiError extends Error {
   }
 }
 
+/**
+ * Server user payload → AccountUser. Role defaults to 'user' so payloads
+ * from a backend that predates the role field (or a cached session saved
+ * before it) can never escalate to 'admin'.
+ */
+export function normalizeUser(u: AccountUser): AccountUser {
+  return { ...u, role: u?.role === 'admin' ? 'admin' : 'user' };
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -83,7 +92,7 @@ export async function registerAccount(
     { email, code, password, displayName },
     null
   );
-  return { token: data.token, user: data.user };
+  return { token: data.token, user: normalizeUser(data.user) };
 }
 
 export async function loginAccount(email: string, password: string): Promise<AccountSession> {
@@ -93,7 +102,7 @@ export async function loginAccount(email: string, password: string): Promise<Acc
     { email, password },
     null
   );
-  return { token: data.token, user: data.user };
+  return { token: data.token, user: normalizeUser(data.user) };
 }
 
 export async function resetPassword(
@@ -107,7 +116,7 @@ export async function resetPassword(
     { email, code, password },
     null
   );
-  return { token: data.token, user: data.user };
+  return { token: data.token, user: normalizeUser(data.user) };
 }
 
 /** Best-effort server-side logout; network failures are ignored. */
@@ -121,23 +130,35 @@ export async function logoutAccount(token: string): Promise<void> {
 
 export type AccountVerifyResult = 'valid' | 'invalid' | 'unreachable';
 
+export interface AccountVerifyOutcome {
+  result: AccountVerifyResult;
+  /** Authoritative profile on 'valid' when the body parsed; lets callers
+   * refresh cached fields (display name, role) without a re-login. */
+  user: AccountUser | null;
+}
+
 /**
  * Re-validates a restored session (GET /api/me). Tri-state, mirroring
  * admin-auth: only an explicit 401 means "logged out"; flaky networks keep
  * the local session.
  */
-export async function verifyAccountSession(token: string): Promise<AccountVerifyResult> {
+export async function verifyAccountSession(token: string): Promise<AccountVerifyOutcome> {
   let res: Response;
   try {
     res = await fetchWithTimeout('/api/me', {
       headers: { Authorization: `Bearer ${token}` },
     });
   } catch {
-    return 'unreachable';
+    return { result: 'unreachable', user: null };
   }
-  if (res.status === 401 || res.status === 403) return 'invalid';
-  if (!res.ok) return 'unreachable';
-  return 'valid';
+  if (res.status === 401 || res.status === 403) return { result: 'invalid', user: null };
+  if (!res.ok) return { result: 'unreachable', user: null };
+  try {
+    const data = (await res.json()) as { user?: AccountUser };
+    return { result: 'valid', user: data?.user ? normalizeUser(data.user) : null };
+  } catch {
+    return { result: 'valid', user: null };
+  }
 }
 
 // ---- items --------------------------------------------------------------

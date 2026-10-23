@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { AiStationItem as AiStationItemType } from '../../types/ai-station';
 import { ApiStationStatus } from '../../types/api-sync';
-import type { MyItemEntry, MyItemStatus, MyItemType } from '../../types/account';
+import type { AccountUser, MyItemEntry, MyItemStatus, MyItemType } from '../../types/account';
 import { analyzeTopology } from '../../utils/api-station-sync';
 import {
   AdminSession,
@@ -35,11 +35,12 @@ interface AccountPanelProps {
 type GuestMode = 'login' | 'register' | 'forgot';
 
 /**
- * 用户中心。三块互斥的界面：
- * - 普通用户登录态：账号信息 + 「我的服务」已开通/待开通清单 + 退出；
+ * 用户中心。一个登录入口，按账号区分界面：
  * - 访客：登录 / 注册（邮箱验证码）/ 忘记密码，本地勾选会在登录后自动合并；
- * - 管理员：API 站管理控制台（原样保留，登录入口折叠为次级区块，
- *   与站内用户会话两套体系并存）。
+ * - 登录用户：账号信息 + 「我的服务」清单 + 退出；
+ * - 站长：本地账号邮箱匹配后端 ADMIN_EMAIL（role=admin）时，登录后额外
+ *   解锁「API 站管理控制台」。控制台仍需 API 站自身凭据 + 2FA —— 那是
+ *   独立系统的授权，站内账号只负责开门。
  */
 export const AccountPanel: React.FC<AccountPanelProps> = ({
   endpoint,
@@ -60,7 +61,7 @@ export const AccountPanel: React.FC<AccountPanelProps> = ({
   const account = useUserAccount();
   const [adminAreaOpen, setAdminAreaOpen] = useState(false);
 
-  // ---- 已登录（普通用户）视图 ------------------------------------------
+  // ---- 已登录视图 --------------------------------------------------------
   if (account.user) {
     return (
       <div className="flex flex-col gap-6">
@@ -71,50 +72,34 @@ export const AccountPanel: React.FC<AccountPanelProps> = ({
           onUnmark={account.setItemStatus}
           onLogout={() => void account.logout()}
         />
-        <AdminArea
-          open={adminAreaOpen}
-          onToggle={() => setAdminAreaOpen((v) => !v)}
-          endpoint={endpoint}
-          onEndpointChange={onEndpointChange}
-          isLoading={isLoading}
-          error={error}
-          statusData={statusData}
-          models={models}
-          stations={stations}
-          onRefresh={onRefresh}
-          onPersistStations={onPersistStations}
-          onResetStations={onResetStations}
-          isAdmin={isAdmin}
-          adminSession={adminSession}
-          onAdminLogin={onLogin}
-          onAdminLogout={onLogout}
-        />
+        {account.user.role === 'admin' ? (
+          <AdminArea
+            open={adminAreaOpen}
+            onToggle={() => setAdminAreaOpen((v) => !v)}
+            endpoint={endpoint}
+            onEndpointChange={onEndpointChange}
+            isLoading={isLoading}
+            error={error}
+            statusData={statusData}
+            models={models}
+            stations={stations}
+            onRefresh={onRefresh}
+            onPersistStations={onPersistStations}
+            onResetStations={onResetStations}
+            isAdmin={isAdmin}
+            adminSession={adminSession}
+            onAdminLogin={onLogin}
+            onAdminLogout={onLogout}
+          />
+        ) : null}
       </div>
     );
   }
 
-  // ---- 访客视图 --------------------------------------------------------
+  // ---- 访客视图：只保留唯一的登录 / 注册入口 -------------------------------
   return (
     <div className="mx-auto flex w-full max-w-md flex-col gap-4">
       <GuestAuthPanel />
-      <AdminArea
-        open={adminAreaOpen}
-        onToggle={() => setAdminAreaOpen((v) => !v)}
-        endpoint={endpoint}
-        onEndpointChange={onEndpointChange}
-        isLoading={isLoading}
-        error={error}
-        statusData={statusData}
-        models={models}
-        stations={stations}
-        onRefresh={onRefresh}
-        onPersistStations={onPersistStations}
-        onResetStations={onResetStations}
-        isAdmin={isAdmin}
-        adminSession={adminSession}
-        onAdminLogin={onLogin}
-        onAdminLogout={onLogout}
-      />
     </div>
   );
 };
@@ -396,7 +381,7 @@ const GuestAuthPanel: React.FC = () => {
 // ---- 已登录：我的服务 ----------------------------------------------------
 
 const UserDashboard: React.FC<{
-  user: { email: string; displayName: string; createdAt: number };
+  user: AccountUser;
   items: MyItemEntry[];
   counts: { opened: number; wanted: number };
   onUnmark: (itemType: MyItemType, itemId: string, status: null) => void;
@@ -433,6 +418,11 @@ const UserDashboard: React.FC<{
             <h2 className="text-sm font-semibold tracking-wide text-[var(--ink)]">
               {user.displayName || user.email}
             </h2>
+            {user.role === 'admin' ? (
+              <span className="rounded-full border border-emerald-200 bg-emerald-50/70 px-2 py-0.5 text-[10px] font-medium text-emerald-800 dark:border-emerald-900/50 dark:bg-emerald-950/40 dark:text-emerald-300">
+                站长
+              </span>
+            ) : null}
           </div>
           <p className="mt-1 text-xs text-[var(--ink-soft)]">
             已开通 {counts.opened} 项 · 待开通 {counts.wanted} 项。点击列表条目可查看详情弹窗。

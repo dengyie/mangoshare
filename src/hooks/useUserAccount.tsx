@@ -22,6 +22,7 @@ import {
   fetchMyItems,
   loginAccount,
   logoutAccount,
+  normalizeUser,
   putMyItems,
   registerAccount,
   resetPassword,
@@ -50,7 +51,8 @@ function loadStoredSession(): AccountSession | null {
     if (!session || typeof session.token !== 'string' || !session.user || typeof session.user.email !== 'string') {
       return null;
     }
-    return session;
+    // Sessions saved before the role field existed must not read as admin.
+    return { ...session, user: normalizeUser(session.user) };
   } catch {
     return null;
   }
@@ -112,6 +114,12 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
   const itemsRef = useRef(items);
   itemsRef.current = items;
 
+  const applySession = useCallback((next: AccountSession | null) => {
+    setSession(next);
+    saveStoredSession(next);
+    sessionRef.current = next;
+  }, []);
+
   // Startup verification: adopt the server checklist when a stored session
   // is still valid; drop the session only when the server rejects it.
   useEffect(() => {
@@ -122,16 +130,21 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
       return;
     }
     (async () => {
-      const result = await verifyAccountSession(stored.token);
+      const outcome = await verifyAccountSession(stored.token);
       if (cancelled) return;
-      if (result === 'invalid') {
+      if (outcome.result === 'invalid') {
         setSession(null);
         saveStoredSession(null);
         // Mirror logout: an expired session must not leave the account's
         // checklist behind as guest marks for the next browser user.
         setItems(new Map());
         clearLocalItems();
-      } else if (result === 'valid') {
+      } else if (outcome.result === 'valid') {
+        // The server profile is authoritative — pick up role/displayName
+        // changes (e.g. the admin email config) without a re-login.
+        if (outcome.user && sessionRef.current?.token === stored.token) {
+          applySession({ token: stored.token, user: outcome.user });
+        }
         try {
           const serverItems = await fetchMyItems(stored.token);
           if (cancelled) return;
@@ -159,13 +172,7 @@ export function UserAccountProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, []);
-
-  const applySession = useCallback((next: AccountSession | null) => {
-    setSession(next);
-    saveStoredSession(next);
-    sessionRef.current = next;
-  }, []);
+  }, [applySession]);
 
   const setItemStatus = useCallback(
     (itemType: MyItemType, itemId: string, status: MyItemStatus | null) => {
