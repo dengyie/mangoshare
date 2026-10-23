@@ -34,7 +34,9 @@ jobs:
           cache-dependency-path: server/go.sum
 
       - name: Test
-        run: go test ./...
+        run: |
+          test -z "$(gofmt -l .)" || { echo "gofmt required on:"; gofmt -l .; exit 1; }
+          go test ./...
         working-directory: server
 
       - name: Build (linux/amd64, no cgo — modernc.org/sqlite)
