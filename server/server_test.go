@@ -247,7 +247,7 @@ func TestWrongCodeAndEnumerationSafety(t *testing.T) {
 	}
 }
 
-// The admin role is derived from cfg.AdminEmail at response time — no DB
+// The admin role is derived from cfg.AdminEmails at response time — no DB
 // column, no way to register into it by racing a config change.
 func TestRoleDerivedFromAdminEmail(t *testing.T) {
 	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
@@ -257,23 +257,26 @@ func TestRoleDerivedFromAdminEmail(t *testing.T) {
 	defer st.close()
 	mailer := &captureMailer{}
 	cfg := LoadConfig()
-	cfg.AdminEmail = "boss@example.com"
+	cfg.AdminEmails = parseAdminEmails("boss@example.com, Second@example.com ,")
 	srv := NewServer(cfg, st, mailer, log.New(io.Discard, "", 0))
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 
 	adminToken := registerUser(t, ts, mailer, "boss@example.com", "password123")
+	secondToken := registerUser(t, ts, mailer, "second@example.com", "password123")
 	userToken := registerUser(t, ts, mailer, "user@example.com", "password123")
 
-	status, out := doJSON(t, ts, "GET", "/api/me", adminToken, nil)
-	if status != http.StatusOK {
-		t.Fatalf("admin me status = %d", status)
-	}
-	if u := out["user"].(map[string]any); u["role"] != "admin" {
-		t.Fatalf("admin role = %v, want admin", u["role"])
+	for _, tok := range []string{adminToken, secondToken} {
+		status, out := doJSON(t, ts, "GET", "/api/me", tok, nil)
+		if status != http.StatusOK {
+			t.Fatalf("admin me status = %d", status)
+		}
+		if u := out["user"].(map[string]any); u["role"] != "admin" {
+			t.Fatalf("role = %v, want admin", u["role"])
+		}
 	}
 
-	status, out = doJSON(t, ts, "GET", "/api/me", userToken, nil)
+	status, out := doJSON(t, ts, "GET", "/api/me", userToken, nil)
 	if status != http.StatusOK {
 		t.Fatalf("user me status = %d", status)
 	}
@@ -292,7 +295,7 @@ func TestRoleDerivedFromAdminEmail(t *testing.T) {
 		t.Fatalf("login role = %v, want admin (case-insensitive match)", u["role"])
 	}
 
-	// an empty AdminEmail means nobody is admin
+	// an empty admin list means nobody is admin
 	emptyCfg := LoadConfig()
 	srv2 := NewServer(emptyCfg, st, mailer, log.New(io.Discard, "", 0))
 	ts2 := httptest.NewServer(srv2.Handler())
@@ -302,7 +305,7 @@ func TestRoleDerivedFromAdminEmail(t *testing.T) {
 		t.Fatalf("no-admin-config me status = %d", status)
 	}
 	if u := out["user"].(map[string]any); u["role"] != "user" {
-		t.Fatalf("role with empty AdminEmail = %v, want user", u["role"])
+		t.Fatalf("role with empty admin list = %v, want user", u["role"])
 	}
 }
 

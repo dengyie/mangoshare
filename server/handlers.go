@@ -111,8 +111,11 @@ type publicUser struct {
 // the API station's own credential store, which the console authenticates
 // against separately.
 func (s *Server) roleOf(email string) string {
-	if s.cfg.AdminEmail != "" && strings.EqualFold(email, s.cfg.AdminEmail) {
-		return "admin"
+	e := strings.ToLower(email)
+	for _, admin := range s.cfg.AdminEmails {
+		if e == admin {
+			return "admin"
+		}
 	}
 	return "user"
 }
