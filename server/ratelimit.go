@@ -13,9 +13,15 @@ type rateLimiter struct {
 	buckets map[string]*rlBucket
 }
 
+// maxRLBuckets bounds the key space: keys are attacker-controlled
+// (client IPs, emails), so once the map grows past this many entries the
+// next allow() sweeps expired buckets instead of letting memory creep.
+const maxRLBuckets = 10_000
+
 type rlBucket struct {
 	count  int
 	window time.Time
+	period time.Duration
 }
 
 func newRateLimiter() *rateLimiter {
@@ -26,9 +32,12 @@ func (rl *rateLimiter) allow(key string, limit int, window time.Duration) bool {
 	now := time.Now()
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
+	if len(rl.buckets) >= maxRLBuckets {
+		rl.sweepLocked(now)
+	}
 	b, ok := rl.buckets[key]
 	if !ok || now.Sub(b.window) >= window {
-		rl.buckets[key] = &rlBucket{count: 1, window: now}
+		rl.buckets[key] = &rlBucket{count: 1, window: now, period: window}
 		return true
 	}
 	if b.count >= limit {
@@ -36,6 +45,16 @@ func (rl *rateLimiter) allow(key string, limit int, window time.Duration) bool {
 	}
 	b.count++
 	return true
+}
+
+// sweepLocked drops buckets whose fixed window has passed. Deleting during
+// range is safe in Go.
+func (rl *rateLimiter) sweepLocked(now time.Time) {
+	for k, b := range rl.buckets {
+		if now.Sub(b.window) >= b.period {
+			delete(rl.buckets, k)
+		}
+	}
 }
 
 // reset clears failure counters (e.g. after a successful login).

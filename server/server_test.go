@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -114,6 +115,13 @@ func registerUser(t *testing.T, ts *httptest.Server, mailer *captureMailer, emai
 		t.Fatal("register returned no token")
 	}
 	return token
+}
+
+// failMailer rejects every send (simulates one-mail / Resend being down).
+type failMailer struct{}
+
+func (failMailer) SendCode(_ context.Context, _, _, _ string) error {
+	return fmt.Errorf("one-mail send status 503: overloaded")
 }
 
 // ---- tests -------------------------------------------------------------
@@ -360,6 +368,102 @@ func TestHealth(t *testing.T) {
 	status, out := doJSON(t, ts, "GET", "/api/health", "", nil)
 	if status != http.StatusOK || out["status"] != "ok" {
 		t.Fatalf("health = %d %v", status, out)
+	}
+}
+
+// postWithIP sends a request as if coming from the given client IP (nginx
+// sets X-Real-IP in production; tests set it directly).
+func postWithIP(t *testing.T, ts *httptest.Server, ip string, path string, body any) int {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		t.Fatal(err)
+	}
+	req, err := http.NewRequest(http.MethodPost, ts.URL+path, &buf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Real-IP", ip)
+	res, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	return res.StatusCode
+}
+
+// A third party hammering a victim's email with suppressed send-code
+// requests must not consume the victim's per-account daily budget.
+func TestSendCodeSuppressionKeepsAccountBudget(t *testing.T) {
+	ts, mailer := newTestServer(t)
+	registerUser(t, ts, mailer, "victim@example.com", "password123")
+	sentBefore := mailer.count() // the registration mail itself
+
+	suppressed202 := 0
+	for i := 0; i < 12; i++ {
+		status := postWithIP(t, ts, "9.9.9.9", "/api/auth/send-code",
+			map[string]string{"email": "victim@example.com", "purpose": purposeRegister})
+		if status == http.StatusAccepted {
+			suppressed202++
+		}
+	}
+	if suppressed202 == 0 {
+		t.Fatal("no suppressed request got through (attacker IP budget misconfigured)")
+	}
+	if got := mailer.count(); got != sentBefore {
+		t.Fatalf("suppressed sends mailed codes: %d -> %d", sentBefore, got)
+	}
+
+	// The victim (own IP) can still get a real reset code the same day.
+	status := postWithIP(t, ts, "8.8.8.8", "/api/auth/send-code",
+		map[string]string{"email": "victim@example.com", "purpose": purposeReset})
+	if status != http.StatusAccepted {
+		t.Fatalf("reset after suppressed flood status = %d (account budget was burned)", status)
+	}
+	if got := mailer.count(); got != sentBefore+1 {
+		t.Fatalf("reset code not mailed: %d -> %d", sentBefore, got)
+	}
+}
+
+// A code must never reach an inbox without being verifiable: the row is
+// persisted before sending and rolled back when the send fails.
+func TestSendCodeMailFailureLeavesNoCode(t *testing.T) {
+	st, err := openStore(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(st.close)
+	srv := NewServer(LoadConfig(), st, failMailer{}, log.New(io.Discard, "", 0))
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+
+	status, _ := doJSON(t, ts, "POST", "/api/auth/send-code", "",
+		map[string]string{"email": "fail@example.com", "purpose": purposeRegister})
+	if status != http.StatusBadGateway {
+		t.Fatalf("send-code with failing mailer status = %d", status)
+	}
+	if _, err := st.getCode("fail@example.com", purposeRegister); !errors.Is(err, errNotFound) {
+		t.Fatalf("failed send must not leave a code row, got %v", err)
+	}
+}
+
+func TestRateLimiterSweepsExpiredBuckets(t *testing.T) {
+	rl := newRateLimiter()
+	expired := time.Now().Add(-time.Minute)
+	rl.mu.Lock()
+	for i := 0; i < maxRLBuckets; i++ {
+		rl.buckets[fmt.Sprintf("k%d", i)] = &rlBucket{count: 1, window: expired, period: time.Second}
+	}
+	rl.mu.Unlock()
+
+	// len has reached the cap: the next allow must sweep the expired
+	// buckets before inserting its own.
+	if !rl.allow("trigger", 5, time.Hour) {
+		t.Fatal("trigger allow rejected")
+	}
+	if len(rl.buckets) != 1 {
+		t.Fatalf("expired buckets not swept, still %d", len(rl.buckets))
 	}
 }
 

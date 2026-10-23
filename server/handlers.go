@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -148,32 +149,38 @@ func (s *Server) handleSendCode(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := clientIP(r)
-	if !s.rl.allow("sc:ip:"+ip, sendIPHourlyLimit, time.Hour) ||
-		!s.rl.allow("sc:acct:"+email, sendDailyLimit, 24*time.Hour) {
-		writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
-		return
-	}
-	if err := s.st.checkSendCooldown(email, purpose, sendCodeCooldown); err != nil {
-		if errors.Is(err, errCooldown) {
-			w.Header().Set("Retry-After", "60")
-			writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
-		return
-	}
-
 	// Anti-enumeration: for an already-registered email the register code is
 	// silently dropped; for an unknown email the reset code is. Response is
-	// identical either way.
+	// identical either way. Suppressed requests only burn the attacker's own
+	// per-IP budget below — charging the victim's per-account daily budget
+	// would let anyone who knows an email lock it out of codes all day.
 	exists, err := s.st.userExists(email)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
 		return
 	}
-	if (purpose == purposeRegister && exists) || (purpose == purposeReset && !exists) {
+	suppressed := (purpose == purposeRegister && exists) || (purpose == purposeReset && !exists)
+
+	if !s.rl.allow("sc:ip:"+ip, sendIPHourlyLimit, time.Hour) {
+		writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
+		return
+	}
+	if suppressed {
 		s.logger.Printf("send-code suppressed email=%s purpose=%s ip=%s", email, purpose, ip)
 		writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})
+		return
+	}
+	if !s.rl.allow("sc:acct:"+email, sendDailyLimit, 24*time.Hour) {
+		writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
+		return
+	}
+	if err := s.st.checkSendCooldown(email, purpose, sendCodeCooldown); err != nil {
+		if errors.Is(err, errCooldown) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(sendCodeCooldown.Seconds())))
+			writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
 		return
 	}
 
@@ -182,13 +189,17 @@ func (s *Server) handleSendCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
 		return
 	}
-	if err := s.mailer.SendCode(r.Context(), email, code, purpose); err != nil {
-		s.logger.Printf("send mail email=%s failed: %v", email, err)
-		writeError(w, http.StatusBadGateway, "邮件发送失败，请稍后重试")
-		return
-	}
+	// Persist before sending: a code that reached an inbox must always
+	// verify. If the send fails the row is rolled back, so every stored code
+	// corresponds to a mailed one.
 	if err := s.st.saveCode(email, purpose, sha256Hex(code), s.cfg.CodeTTL); err != nil {
 		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
+		return
+	}
+	if err := s.mailer.SendCode(r.Context(), email, code, purpose); err != nil {
+		s.logger.Printf("send mail email=%s failed: %v", email, err)
+		_ = s.st.deleteCode(email, purpose)
+		writeError(w, http.StatusBadGateway, "邮件发送失败，请稍后重试")
 		return
 	}
 	writeJSON(w, http.StatusAccepted, map[string]bool{"ok": true})

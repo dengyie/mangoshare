@@ -317,7 +317,10 @@ func (s *store) listItems(userID int64) ([]itemEntry, error) {
 
 // applyItems merges client entries last-writer-wins per item key: an
 // incoming entry only applies when it is not older than the stored one.
-// Empty status deletes the row. Returns the authoritative list.
+// The stored updated_at keeps the client action time (already sanitized by
+// the handler), so merge ordering stays anchored to when the user acted,
+// not to when a sync happened to arrive. Empty status deletes the row.
+// Returns the authoritative list.
 func (s *store) applyItems(userID int64, items []itemEntry, maxItems int) ([]itemEntry, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -325,7 +328,6 @@ func (s *store) applyItems(userID int64, items []itemEntry, maxItems int) ([]ite
 	}
 	defer tx.Rollback()
 
-	nowMS := time.Now().UnixMilli()
 	for _, in := range items {
 		var existingMS int64
 		err := tx.QueryRow(
@@ -337,7 +339,7 @@ func (s *store) applyItems(userID int64, items []itemEntry, maxItems int) ([]ite
 			}
 			if _, err := tx.Exec(
 				`INSERT INTO user_items (user_id, item_type, item_id, status, updated_at) VALUES (?, ?, ?, ?, ?)`,
-				userID, in.ItemType, in.ItemID, in.Status, nowMS); err != nil {
+				userID, in.ItemType, in.ItemID, in.Status, in.UpdatedAt); err != nil {
 				return nil, err
 			}
 			continue
@@ -358,7 +360,7 @@ func (s *store) applyItems(userID int64, items []itemEntry, maxItems int) ([]ite
 		}
 		if _, err := tx.Exec(
 			`UPDATE user_items SET status = ?, updated_at = ? WHERE user_id = ? AND item_type = ? AND item_id = ?`,
-			in.Status, nowMS, userID, in.ItemType, in.ItemID); err != nil {
+			in.Status, in.UpdatedAt, userID, in.ItemType, in.ItemID); err != nil {
 			return nil, err
 		}
 	}
