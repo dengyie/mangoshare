@@ -85,7 +85,16 @@ jobs:
 
       - name: Verify production
         run: |
-          sleep 3
-          body=$(curl -sf https://share.mangoqwq.com/account-api/api/health)
+          # nl-vps runs on a host with heavy CPU-steal spikes: after a restart
+          # the backend can take ~2 minutes to bind, and single requests can
+          # stall out. Retry the health assert for up to ~4 minutes instead of
+          # failing the deploy on a blip.
+          body=""
+          for i in $(seq 1 15); do
+            body=$(curl -sf -m 8 https://share.mangoqwq.com/account-api/api/health || true)
+            [ "$body" = '{"status":"ok"}' ] && break
+            echo "attempt $i: not healthy yet (${body:-no response}); retrying in 15s"
+            sleep 15
+          done
+          [ "$body" = '{"status":"ok"}' ] || { echo "Production health check failed after retries"; exit 1; }
           echo "health: $body"
-          [ "$body" = '{"status":"ok"}' ] || { echo "Production health check failed"; exit 1; }
