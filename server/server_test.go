@@ -295,8 +295,10 @@ func TestRoleDerivedFromAdminEmail(t *testing.T) {
 		t.Fatalf("login role = %v, want admin (case-insensitive match)", u["role"])
 	}
 
-	// an empty admin list means nobody is admin
+	// an empty admin list means nobody is admin — set explicitly so the
+	// case stays hermetic regardless of the CI environment's ADMIN_EMAIL.
 	emptyCfg := LoadConfig()
+	emptyCfg.AdminEmails = nil
 	srv2 := NewServer(emptyCfg, st, mailer, log.New(io.Discard, "", 0))
 	ts2 := httptest.NewServer(srv2.Handler())
 	t.Cleanup(ts2.Close)
@@ -306,6 +308,36 @@ func TestRoleDerivedFromAdminEmail(t *testing.T) {
 	}
 	if u := out["user"].(map[string]any); u["role"] != "user" {
 		t.Fatalf("role with empty admin list = %v, want user", u["role"])
+	}
+}
+
+func TestParseAdminEmails(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want []string
+	}{
+		{"empty", "", nil},
+		{"whitespace only", "   ", nil},
+		{"comma only", ",", nil},
+		{"commas with spaces", " , , ", nil},
+		{"single", "a@b.c", []string{"a@b.c"}},
+		{"trim and lowercase", " A@B.C , d@e.f ", []string{"a@b.c", "d@e.f"}},
+		{"dedupe case-insensitively", "a@b.c, A@B.C ,a@b.c", []string{"a@b.c"}},
+		{"keeps first-seen order", "z@x.y, a@b.c, M@N.O", []string{"z@x.y", "a@b.c", "m@n.o"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := parseAdminEmails(tc.in)
+			if len(got) != len(tc.want) {
+				t.Fatalf("parseAdminEmails(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("parseAdminEmails(%q) = %v, want %v", tc.in, got, tc.want)
+				}
+			}
+		})
 	}
 }
 

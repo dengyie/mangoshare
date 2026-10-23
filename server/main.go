@@ -46,6 +46,15 @@ func main() {
 		mailer = devMailer{logger: logger}
 	}
 
+	// Confirm the env parse took effect: this list is what accounts are
+	// matched against for the admin role, so a mangled ADMIN_EMAIL would
+	// otherwise silently demote everyone to plain user.
+	if len(cfg.AdminEmails) == 0 {
+		logger.Print("admin_emails: none — no account holds the admin role")
+	} else {
+		logger.Printf("admin_emails: %s", strings.Join(cfg.AdminEmails, ", "))
+	}
+
 	srv := NewServer(cfg, st, mailer, logger)
 
 	httpSrv := &http.Server{
