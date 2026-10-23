@@ -174,25 +174,22 @@ func (s *Server) handleSendCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
 		return
 	}
-	if err := s.st.checkSendCooldown(email, purpose, sendCodeCooldown); err != nil {
-		if errors.Is(err, errCooldown) {
-			w.Header().Set("Retry-After", strconv.Itoa(int(sendCodeCooldown.Seconds())))
-			writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
-		return
-	}
-
 	code, err := randomCode()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
 		return
 	}
 	// Persist before sending: a code that reached an inbox must always
-	// verify. If the send fails the row is rolled back, so every stored code
-	// corresponds to a mailed one.
-	if err := s.st.saveCode(email, purpose, sha256Hex(code), s.cfg.CodeTTL); err != nil {
+	// verify. The save atomically enforces the resend cooldown — a loser
+	// gets 429 instead of mailing a second code. If the send fails the row
+	// is rolled back, so every stored code corresponds to a mailed one (and
+	// the cooldown goes with it, so the user can retry immediately).
+	if err := s.st.saveCode(email, purpose, sha256Hex(code), s.cfg.CodeTTL, sendCodeCooldown); err != nil {
+		if errors.Is(err, errCooldown) {
+			w.Header().Set("Retry-After", strconv.Itoa(int(sendCodeCooldown.Seconds())))
+			writeError(w, http.StatusTooManyRequests, "发送过于频繁，请稍后再试")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "服务暂时不可用，请稍后再试")
 		return
 	}
@@ -332,9 +329,9 @@ func dummyHashFor(email string) string {
 
 func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email      string `json:"email"`
-		Code       string `json:"code"`
-		Password   string `json:"password"`
+		Email    string `json:"email"`
+		Code     string `json:"code"`
+		Password string `json:"password"`
 	}
 	if !readJSON(w, r, &req) {
 		return

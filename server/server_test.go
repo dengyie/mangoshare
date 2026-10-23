@@ -426,6 +426,56 @@ func TestSendCodeSuppressionKeepsAccountBudget(t *testing.T) {
 	}
 }
 
+// Concurrent send-code requests for the same email+purpose must produce
+// exactly one mailed code: the cooldown is enforced atomically inside
+// saveCode, so the loser of the race gets 429 instead of a second mail.
+func TestSendCodeConcurrentSendsOneMail(t *testing.T) {
+	ts, mailer := newTestServer(t)
+
+	const racers = 8
+	statuses := make([]int, racers)
+	var wg sync.WaitGroup
+	for i := 0; i < racers; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			statuses[i], _ = doJSON(t, ts, "POST", "/api/auth/send-code", "",
+				map[string]string{"email": "race@example.com", "purpose": purposeRegister})
+		}(i)
+	}
+	wg.Wait()
+
+	mailed := 0
+	accepted := 0
+	tooMany := 0
+	for _, st := range statuses {
+		switch st {
+		case http.StatusAccepted:
+			accepted++
+		case http.StatusTooManyRequests:
+			tooMany++
+		}
+	}
+	if accepted != 1 || tooMany != racers-1 {
+		t.Fatalf("expected exactly 1 accepted + %d 429, got accepted=%d 429=%d statuses=%v",
+			racers-1, accepted, tooMany, statuses)
+	}
+	mailed = mailer.count()
+	if mailed != 1 {
+		t.Fatalf("exactly one mail expected, got %d", mailed)
+	}
+
+	// The stored code must be the one that was mailed: register succeeds
+	// with it.
+	code := mailer.last(t).Code
+	status, out := doJSON(t, ts, "POST", "/api/auth/register", "", map[string]string{
+		"email": "race@example.com", "code": code, "password": "password123",
+	})
+	if status != http.StatusOK {
+		t.Fatalf("register with mailed code status = %d %v", status, out)
+	}
+}
+
 // A code must never reach an inbox without being verifiable: the row is
 // persisted before sending and rolled back when the send fails.
 func TestSendCodeMailFailureLeavesNoCode(t *testing.T) {

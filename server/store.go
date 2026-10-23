@@ -96,11 +96,11 @@ CREATE INDEX IF NOT EXISTS idx_user_items_user ON user_items(user_id);
 // ---- users -------------------------------------------------------------
 
 type user struct {
-	ID            int64
-	Email         string
-	PasswordHash  string
-	DisplayName   string
-	CreatedAt     int64
+	ID           int64
+	Email        string
+	PasswordHash string
+	DisplayName  string
+	CreatedAt    int64
 }
 
 func (s *store) userByEmail(email string) (*user, error) {
@@ -171,34 +171,41 @@ func (s *store) getCode(email, purpose string) (*codeRow, error) {
 	return &c, nil
 }
 
-// checkSendCooldown enforces a per-email+purpose resend cooldown.
-func (s *store) checkSendCooldown(email, purpose string, cooldown time.Duration) error {
-	c, err := s.getCode(email, purpose)
-	if errors.Is(err, errNotFound) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if time.Since(time.Unix(c.LastSentAt, 0)) < cooldown {
-		return errCooldown
-	}
-	return nil
-}
-
-func (s *store) saveCode(email, purpose, codeHash string, ttl time.Duration) error {
+// saveCode atomically enforces the per-email+purpose resend cooldown and
+// persists the new code: the SELECT only produces a row when no live row
+// was sent inside the cooldown window, so a blocked request is a silent
+// zero-row insert — detected via RowsAffected and reported as errCooldown
+// (→ 429). Statements run serialized on the single connection, so two
+// concurrent send-code requests can never both reach the mailer; a
+// check-then-insert split had both passing the check and sending two mails.
+func (s *store) saveCode(email, purpose, codeHash string, ttl, cooldown time.Duration) error {
 	now := time.Now().Unix()
-	_, err := s.db.Exec(`
+	res, err := s.db.Exec(`
 INSERT INTO email_codes (email, purpose, code_hash, attempts, created_at, expires_at, last_sent_at)
-VALUES (?, ?, ?, 0, ?, ?, ?)
+SELECT ?, ?, ?, 0, ?, ?, ?
+WHERE NOT EXISTS (
+  SELECT 1 FROM email_codes
+  WHERE email = ? AND purpose = ? AND ? - last_sent_at < ?
+)
 ON CONFLICT (email, purpose) DO UPDATE SET
   code_hash = excluded.code_hash,
   attempts = 0,
   created_at = excluded.created_at,
   expires_at = excluded.expires_at,
   last_sent_at = excluded.last_sent_at`,
-		email, purpose, codeHash, now, now+int64(ttl.Seconds()), now)
-	return err
+		email, purpose, codeHash, now, now+int64(ttl.Seconds()), now,
+		email, purpose, now, int64(cooldown.Seconds()))
+	if err != nil {
+		return err
+	}
+	affected, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if affected == 0 {
+		return errCooldown
+	}
+	return nil
 }
 
 // verifyCode consumes a correct code; wrong attempts count up to
